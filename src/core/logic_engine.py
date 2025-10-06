@@ -563,12 +563,27 @@ def safe_track_model(model, frame, classes=None, verbose=False, imgsz=None):
         frame: Input frame
         classes: Classes to detect
         verbose: Verbosity flag
-        imgsz: Image size for consistent processing
+        imgsz: Image size for consistent processing (will be adjusted to multiples of 32)
     
     Returns:
         Model results
     """
     try:
+        # Ensure imgsz is a multiple of 32 for YOLO models
+        if imgsz is not None:
+            if isinstance(imgsz, (int, float)):
+                # Single value provided, make it a multiple of 32
+                imgsz = (int(imgsz // 32) * 32, int(imgsz // 32) * 32)
+            elif isinstance(imgsz, (list, tuple)) and len(imgsz) == 2:
+                # Two values provided, make each a multiple of 32
+                imgsz = (int(imgsz[0] // 32) * 32, int(imgsz[1] // 32) * 32)
+            else:
+                # Default to 640x640 if invalid imgsz provided
+                imgsz = (640, 640)
+        else:
+            # Default to 640x640 if no imgsz provided
+            imgsz = (640, 640)
+            
         if classes is not None:
             return model.track(frame, persist=True, classes=classes, verbose=verbose, imgsz=imgsz)
         else:
@@ -601,14 +616,102 @@ def safe_predict_model(model, frame, conf=0.15, iou=0.5, imgsz=640, verbose=Fals
         frame: Input frame
         conf: Confidence threshold
         iou: IoU threshold
-        imgsz: Image size
+        imgsz: Image size (will be adjusted to multiples of 32)
         verbose: Verbosity flag
     
     Returns:
         Model results
     """
     try:
+        # Ensure imgsz is a multiple of 32 for YOLO models
+        if isinstance(imgsz, (int, float)):
+            imgsz = int(imgsz // 32) * 32
+        else:
+            imgsz = 640
+            
         return model.predict(frame, conf=conf, iou=iou, imgsz=imgsz, verbose=verbose)
     except Exception as e:
         print(f"Warning: Model prediction failed: {e}")
         return None
+
+def resize_frame_with_aspect_ratio(frame, target_size=640):
+    """
+    Resize frame while preserving aspect ratio and ensuring dimensions are multiples of 32.
+    
+    Args:
+        frame: Input frame (numpy array)
+        target_size: Target size for the larger dimension
+        
+    Returns:
+        resized_frame: Resized frame
+        scale_ratio: Scale ratio used for resizing
+        padding: Padding applied (top, bottom, left, right)
+    """
+    h, w = frame.shape[:2]
+    
+    # Calculate scale ratio to fit within target_size while preserving aspect ratio
+    scale_ratio = target_size / max(h, w)
+    
+    # Calculate new dimensions
+    new_w = int(w * scale_ratio)
+    new_h = int(h * scale_ratio)
+    
+    # Make dimensions multiples of 32 for YOLO models
+    new_w = (new_w // 32) * 32
+    new_h = (new_h // 32) * 32
+    
+    # Ensure minimum size of 32
+    new_w = max(new_w, 32)
+    new_h = max(new_h, 32)
+    
+    # Resize frame
+    resized_frame = cv2.resize(frame, (new_w, new_h))
+    
+    # Calculate padding to make it exactly target_size
+    pad_w = target_size - new_w
+    pad_h = target_size - new_h
+    
+    # Distribute padding evenly
+    pad_left = pad_w // 2
+    pad_right = pad_w - pad_left
+    pad_top = pad_h // 2
+    pad_bottom = pad_h - pad_top
+    
+    # Add padding
+    padded_frame = cv2.copyMakeBorder(
+        resized_frame, pad_top, pad_bottom, pad_left, pad_right, 
+        cv2.BORDER_CONSTANT, value=(114, 114, 114)  # Gray padding
+    )
+    
+    return padded_frame, scale_ratio, (pad_top, pad_bottom, pad_left, pad_right)
+
+def scale_boxes_to_original(boxes, scale_ratio, padding, original_shape):
+    """
+    Scale bounding boxes back to original frame dimensions.
+    
+    Args:
+        boxes: Bounding boxes from model output (xyxy format)
+        scale_ratio: Scale ratio used during resizing
+        padding: Padding applied (top, bottom, left, right)
+        original_shape: Original frame shape (h, w)
+        
+    Returns:
+        scaled_boxes: Bounding boxes scaled to original dimensions
+    """
+    if len(boxes) == 0:
+        return boxes
+        
+    # Remove padding
+    pad_top, pad_bottom, pad_left, pad_right = padding
+    boxes[:, [0, 2]] -= pad_left  # x coordinates
+    boxes[:, [1, 3]] -= pad_top   # y coordinates
+    
+    # Scale back using the inverse of scale ratio
+    boxes /= scale_ratio
+    
+    # Clip boxes to original frame dimensions
+    h, w = original_shape[:2]
+    boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, w)
+    boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, h)
+    
+    return boxes

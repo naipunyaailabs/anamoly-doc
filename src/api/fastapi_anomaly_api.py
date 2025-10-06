@@ -234,12 +234,19 @@ def process_video_background(video_path: str):
             
         if frame_count % config.FRAME_PROCESSING_INTERVAL == 0:
             try:
+                # Resize frame while preserving aspect ratio for model inference
+                # This makes the system resolution-agnostic by adapting to any input size
+                resized_frame, scale_ratio, padding = logic.resize_frame_with_aspect_ratio(frame)
+                
                 # Use safe tracking with fallback to detection mode
-                pose_results = logic.safe_track_model(pose_model, frame, verbose=False, imgsz=[resized_h, resized_w])
-                obj_results = logic.safe_track_model(obj_model, frame, classes=[56], verbose=False, imgsz=[resized_h, resized_w])
+                # The resized frame has consistent dimensions (640x640) for model inference
+                pose_results = logic.safe_track_model(pose_model, resized_frame, verbose=False)
+                obj_results = logic.safe_track_model(obj_model, resized_frame, classes=[56], verbose=False)
+                table_results = logic.safe_track_model(obj_model, resized_frame, classes=[60, 72], verbose=False)
 
                 # Generate the fully rendered frame once
                 fully_annotated_frame = pose_results[0].plot()
+                # Start with original frame for annotations at full resolution
                 annotated_frame = frame.copy()
                 
                 person_boxes = pose_results[0].boxes.xyxy.cpu().numpy()
@@ -258,10 +265,28 @@ def process_video_background(video_path: str):
                         next_display_id += 1
                     current_display_ids.append(tracker_to_display_id[tracker_id])
 
+                # Scale bounding boxes back to original frame dimensions for accurate visualization
+                # This ensures that annotations are correctly placed on the original resolution
+                if len(person_boxes) > 0:
+                    person_boxes = logic.scale_boxes_to_original(person_boxes, scale_ratio, padding, (h, w))
+                if len(chair_boxes) > 0:
+                    chair_boxes = logic.scale_boxes_to_original(chair_boxes, scale_ratio, padding, (h, w))
+                table_boxes = table_results[0].boxes.xyxy.cpu().numpy() if len(table_results[0].boxes) > 0 else np.array([])
+                if len(table_boxes) > 0:
+                    table_boxes = logic.scale_boxes_to_original(table_boxes, scale_ratio, padding, (h, w))
+
                 person_states = []
                 # Check if we have keypoints before processing
                 if len(all_keypoints) > 0:
                     for i, kpts in enumerate(all_keypoints):
+                        # Scale keypoints back to original frame dimensions
+                        if len(kpts) > 0:
+                            kpts[:, 0] = (kpts[:, 0] - padding[2]) / scale_ratio  # x coordinates
+                            kpts[:, 1] = (kpts[:, 1] - padding[0]) / scale_ratio  # y coordinates
+                            # Clip to original frame dimensions
+                            kpts[:, 0] = np.clip(kpts[:, 0], 0, w)
+                            kpts[:, 1] = np.clip(kpts[:, 1], 0, h)
+                        
                         state = {
                             'sitting': logic.is_sitting(kpts), 'standing': logic.is_standing(kpts),
                             'using_phone': logic.is_using_phone(kpts), 'box': person_boxes[i] if i < len(person_boxes) else None,
@@ -296,18 +321,18 @@ def process_video_background(video_path: str):
                             "anomaly": person_anomalies,
                             "person": person['id']
                         })
-                
+                        
                 # High-speed splicing for person-based anomalies
+                # Draw annotations on full resolution frame
                 for anomaly in anomalies_to_draw:
                     box, label = anomaly['box'], anomaly['label']
-                    x1, y1, x2, y2 = map(int, box)
-                    # Copy the region with the skeleton from the fully rendered frame
-                    annotated_frame[y1:y2, x1:x2] = fully_annotated_frame[y1:y2, x1:x2]
-                    # Draw our custom box and label on top
-                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 165, 255), 2)
-                    cv2.putText(annotated_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
+                    if box is not None:
+                        x1, y1, x2, y2 = map(int, box)
+                        # Draw on full resolution frame
+                        cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 165, 255), 2)
+                        cv2.putText(annotated_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
 
-                # Draw empty chair anomalies
+                # Draw empty chair anomalies on full resolution frame
                 empty_chair_boxes = logic.find_empty_chairs(chair_boxes, person_boxes)
                 for box in empty_chair_boxes:
                     x1, y1, x2, y2 = map(int, box)
@@ -324,67 +349,70 @@ def process_video_background(video_path: str):
                 doc_results = None
                 if document_model is not None:
                     try:
-                        # Document detection using YOLO-World (optimized for CPU, lower confidence for better detection)
-                        doc_results = document_model.predict(frame, conf=0.15, iou=0.5, imgsz=640, verbose=False)
+                        # Document detection using YOLO-World on resized frame
+                        doc_results = document_model.predict(resized_frame, conf=0.15, iou=0.5, imgsz=640, verbose=False)
+                        
+                        # Process document anomalies only if detection was successful
+                        if doc_results is not None:
+                            # Extract document detection boxes
+                            document_boxes = doc_results[0].boxes.xyxy.cpu().numpy() if len(doc_results[0].boxes) > 0 else np.array([])
+                            
+                            # Only process document anomalies if we detected documents
+                            if len(document_boxes) > 0:
+                                # Scale document boxes back to original dimensions
+                                document_boxes = logic.scale_boxes_to_original(document_boxes, scale_ratio, padding, (h, w))
+                                
+                                # Detect tables/desks using multiple classes: 60=dining table, 72=tv (for desk-like objects)
+                                try:
+                                    table_results = logic.safe_track_model(obj_model, resized_frame, classes=[60, 72], verbose=False)
+                                except cv2.error as e:
+                                    if "prevPyr[level * lvlStep1].size() == nextPyr[level * lvlStep2].size()" in str(e):
+                                        print(f"Warning: Optical flow pyramid size mismatch for table detection. Switching to detection mode.")
+                                        # Fallback to detection mode without tracking
+                                        table_results = obj_model(resized_frame, classes=[60, 72], verbose=False)
+                                    else:
+                                        # Re-raise if it's a different error
+                                        raise e
+                                table_boxes = table_results[0].boxes.xyxy.cpu().numpy() if len(table_results[0].boxes) > 0 else np.array([])
+                                # Scale table boxes back to original dimensions
+                                if len(table_boxes) > 0:
+                                    table_boxes = logic.scale_boxes_to_original(table_boxes, scale_ratio, padding, (h, w))
+                                
+                                # Check for unattended documents on tables/desks (more lenient thresholds)
+                                has_doc_anomaly, unattended_docs = logic.detect_document_anomaly_enhanced(
+                                    document_boxes, person_boxes, table_boxes, 
+                                    proximity_threshold=250, table_overlap_threshold=0.05  # More lenient thresholds
+                                )
+                                
+                                if has_doc_anomaly and len(unattended_docs) > 0:
+                                    print(f"ANOMALY: {len(unattended_docs)} Unattended Document(s)")
+                                    
+                                    # Add document anomalies to log
+                                    anomaly_log.append({
+                                        "anomaly": ["unattended_document"],
+                                        "person": -1,
+                                        "count": len(unattended_docs)
+                                    })
+                                    
+                                    # Draw unattended document boxes on full resolution frame
+                                    for doc_box in unattended_docs:
+                                        x1, y1, x2, y2 = map(int, doc_box)
+                                        cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 0, 255), 2)  # Magenta color
+                                        cv2.putText(annotated_frame, 'Unattended Document', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
+                            
+                            # Optionally draw all detected documents with a different color
+                            for doc_box in document_boxes:
+                                x1, y1, x2, y2 = map(int, doc_box)
+                                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 255, 0), 1)  # Cyan outline for all documents
+                            
+                            # Draw detected tables/desks for debugging
+                            for table_box in table_boxes:
+                                x1, y1, x2, y2 = map(int, table_box)
+                                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)  # Green outline for tables
+                                cv2.putText(annotated_frame, 'Table/Desk', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                     except Exception as e:
                         print(f"Warning: Document detection failed: {e}")
                         doc_results = None
-                
-                # Process document anomalies only if document model is available and detection was successful
-                if document_model is not None and doc_results is not None:
-                    try:
-                        # Extract document detection boxes (books represent documents)
-                        document_boxes = doc_results[0].boxes.xyxy.cpu().numpy() if len(doc_results[0].boxes) > 0 else np.array([])
-                        
-                        # Initialize table_boxes as empty array
-                        table_boxes = np.array([])
-                        
-                        # Only process document anomalies if we detected documents
-                        if len(document_boxes) > 0:
-                            # Detect tables/desks using multiple classes: 60=dining table, 72=tv (for desk-like objects)
-                            table_results = logic.safe_track_model(obj_model, frame, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
-                            table_boxes = table_results[0].boxes.xyxy.cpu().numpy() if len(table_results[0].boxes) > 0 else np.array([])
-                            
-                            # Check for unattended documents on tables/desks (more lenient thresholds)
-                            has_doc_anomaly, unattended_docs = logic.detect_document_anomaly_enhanced(
-                                document_boxes, person_boxes, table_boxes, 
-                                proximity_threshold=250, table_overlap_threshold=0.05  # More lenient thresholds
-                            )
-                            
-                            # Add to temporal filter
-                            doc_temporal_filter.add_detection(has_doc_anomaly)
-                            
-                            # Check if anomaly is stable over time
-                            stable_doc_anomaly = doc_temporal_filter.get_stable_anomaly()
-                            
-                            if stable_doc_anomaly and len(unattended_docs) > 0:
-                                print(f"ANOMALY: {len(unattended_docs)} Unattended Document(s)")
-                                
-                                # Add document anomalies to log
-                                anomaly_log.append({
-                                    "anomaly": ["unattended_document"],
-                                    "person": -1,
-                                    "count": len(unattended_docs)
-                                })
-                                
-                                # Draw unattended document boxes
-                                for doc_box in unattended_docs:
-                                    x1, y1, x2, y2 = map(int, doc_box)
-                                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 0, 255), 2)  # Magenta color
-                                    cv2.putText(annotated_frame, 'Unattended Document', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
-                        
-                        # Optionally draw all detected documents with a different color
-                        for doc_box in document_boxes:
-                            x1, y1, x2, y2 = map(int, doc_box)
-                            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 255, 0), 1)  # Cyan outline for all documents
-                        
-                        # Draw detected tables/desks for debugging
-                        for table_box in table_boxes:
-                            x1, y1, x2, y2 = map(int, table_box)
-                            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)  # Green outline for tables
-                            cv2.putText(annotated_frame, 'Table/Desk', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                    except Exception as e:
-                        print(f"Warning: Document detection failed: {e}")
 
                 # Save frame data to MongoDB and prepare for display
                 if anomaly_log:  # Only save frames with anomalies
