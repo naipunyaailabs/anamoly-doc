@@ -157,42 +157,51 @@ def process_video(video_path):
         if success:
             frame_count += 1
             
-            # Store original frame dimensions for consistent resizing and visualization
+            # Store original frame dimensions for consistent resizing
             original_h, original_w = frame.shape[:2]
             
-            # Process every Nth frame (based on configuration)
-            if frame_count % config.FRAME_PROCESSING_INTERVAL == 0:
-                # Resize frame while preserving aspect ratio for model inference
-                # This makes the system resolution-agnostic by adapting to any input size
-                resized_frame, scale_ratio, padding = logic.resize_frame_with_aspect_ratio(frame)
+            max_width, max_height = 1280, 720
+            h, w, _ = frame.shape
+            if w > max_width or h > max_height:
+                ratio = min(max_width / w, max_height / h)
+                frame = cv2.resize(frame, (int(w * ratio), int(h * ratio)))
+                # Store resized dimensions
+                resized_h, resized_w = frame.shape[:2]
+            else:
+                # If no resizing needed, dimensions remain the same
+                resized_h, resized_w = h, w
                 
+            # Process every 3rd frame
+            if frame_count % 3 == 0:
                 # Use safe tracking with fallback to detection mode
-                # The resized frame has consistent dimensions (640x640) for model inference
-                pose_results = logic.safe_track_model(pose_model, resized_frame, verbose=False)
-                obj_results = logic.safe_track_model(obj_model, resized_frame, classes=[56], verbose=False)
+                pose_results = logic.safe_track_model(pose_model, frame, verbose=False, imgsz=[resized_h, resized_w])
+                obj_results = logic.safe_track_model(obj_model, frame, classes=[56], verbose=False, imgsz=[resized_h, resized_w])
                 # Detect tables/desks using multiple classes: 60=dining table, 72=tv (for desk-like objects)
-                table_results = logic.safe_track_model(obj_model, resized_frame, classes=[60, 72], verbose=False)
+                table_results = logic.safe_track_model(obj_model, frame, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
                 
                 # Document detection using YOLO-World (only if model loaded successfully)
                 doc_results = None
                 if document_model is not None:
                     # Use safe prediction with error handling
-                    doc_results = logic.safe_predict_model(document_model, resized_frame, conf=0.15, iou=0.5, verbose=False)
+                    doc_results = logic.safe_predict_model(document_model, frame, conf=0.15, iou=0.5, imgsz=640, verbose=False)
                 
+                # TODO: Re-enable phone detection when more reliable
+                # phone_results = obj_model.track(frame, persist=True, classes=[67], verbose=False)
+
                 # --- 1. Generate the fully rendered frame once (this is fast) ---
                 fully_annotated_frame = pose_results[0].plot()
                 # --- 2. Start with a clean frame for our selective display ---
-                annotated_frame = resized_frame.copy()
+                annotated_frame = frame.copy()
                 
                 print("\n--- Anomaly Report ---")
                 
-                # Extract detection results
                 person_boxes = pose_results[0].boxes.xyxy.cpu().numpy()
                 chair_boxes = obj_results[0].boxes.xyxy.cpu().numpy()
                 # Extract table detection boxes
                 table_boxes = table_results[0].boxes.xyxy.cpu().numpy() if len(table_results[0].boxes) > 0 else np.array([])
                 # Extract document detection boxes
                 document_boxes = doc_results[0].boxes.xyxy.cpu().numpy() if doc_results is not None and len(doc_results[0].boxes) > 0 else np.array([])
+                # phone_boxes = phone_results[0].boxes.xyxy.cpu().numpy() if len(phone_results[0].boxes) > 0 else np.array([])
                 all_keypoints = pose_results[0].keypoints.xy.cpu().numpy()
                 
                 person_tracker_ids = np.array([])
@@ -204,29 +213,10 @@ def process_video(video_path):
                 for i in range(len(person_tracker_ids)):
                     current_display_ids.append(i)  # Use sequential IDs: 0, 1, 2, 3...
 
-                # Scale bounding boxes back to original frame dimensions for accurate visualization
-                # This ensures that annotations are correctly placed on the original resolution
-                if len(person_boxes) > 0:
-                    person_boxes = logic.scale_boxes_to_original(person_boxes, scale_ratio, padding, (original_h, original_w))
-                if len(chair_boxes) > 0:
-                    chair_boxes = logic.scale_boxes_to_original(chair_boxes, scale_ratio, padding, (original_h, original_w))
-                if len(table_boxes) > 0:
-                    table_boxes = logic.scale_boxes_to_original(table_boxes, scale_ratio, padding, (original_h, original_w))
-                if len(document_boxes) > 0:
-                    document_boxes = logic.scale_boxes_to_original(document_boxes, scale_ratio, padding, (original_h, original_w))
-
                 person_states = []
                 # Check if we have keypoints before processing
                 if len(all_keypoints) > 0:
                     for i, kpts in enumerate(all_keypoints):
-                        # Scale keypoints back to original frame dimensions
-                        if len(kpts) > 0:
-                            kpts[:, 0] = (kpts[:, 0] - padding[2]) / scale_ratio  # x coordinates
-                            kpts[:, 1] = (kpts[:, 1] - padding[0]) / scale_ratio  # y coordinates
-                            # Clip to original frame dimensions
-                            kpts[:, 0] = np.clip(kpts[:, 0], 0, original_w)
-                            kpts[:, 1] = np.clip(kpts[:, 1], 0, original_h)
-                        
                         sitting = logic.is_sitting(kpts)
                         standing = logic.is_standing(kpts)
                         using_phone = logic.is_using_phone(kpts)
@@ -270,24 +260,22 @@ def process_video(video_path):
                         })
                 
                 # --- 3. High-speed splicing for person-based anomalies ---
-                # Create a full-size annotated frame to draw annotations at original resolution
-                full_annotated_frame = frame.copy()
-                
                 for anomaly in anomalies_to_draw:
                     box, label = anomaly['box'], anomaly['label']
-                    if box is not None:
-                        x1, y1, x2, y2 = map(int, box)
-                        # Draw bounding box and label on full resolution frame
-                        cv2.rectangle(full_annotated_frame, (x1, y1), (x2, y2), (0, 165, 255), 2)
-                        cv2.putText(full_annotated_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
+                    x1, y1, x2, y2 = map(int, box)
+                    # Copy the region with the skeleton from the fully rendered frame
+                    annotated_frame[y1:y2, x1:x2] = fully_annotated_frame[y1:y2, x1:x2]
+                    # Draw our custom box and label on top
+                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 165, 255), 2)
+                    cv2.putText(annotated_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
 
                 # Draw empty chair anomalies (this is already fast)
                 empty_chair_boxes = logic.find_empty_chairs(chair_boxes, person_boxes)
                 for box in empty_chair_boxes:
                     print("ANOMALY: Empty Chair")
                     x1, y1, x2, y2 = map(int, box)
-                    cv2.rectangle(full_annotated_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                    cv2.putText(full_annotated_frame, 'Empty Chair Anomaly', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                    cv2.putText(annotated_frame, 'Empty Chair Anomaly', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
                     
                     # Add empty chair anomalies to log
                     anomaly_log.append({
@@ -322,24 +310,24 @@ def process_video(video_path):
                         # Draw unattended document boxes
                         for doc_box in unattended_docs:
                             x1, y1, x2, y2 = map(int, doc_box)
-                            cv2.rectangle(full_annotated_frame, (x1, y1), (x2, y2), (255, 0, 255), 2)  # Magenta color
-                            cv2.putText(full_annotated_frame, 'Unattended Document', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
+                            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 0, 255), 2)  # Magenta color
+                            cv2.putText(annotated_frame, 'Unattended Document', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
                     
                     # Optionally draw all detected documents with a different color
                     for doc_box in document_boxes:
                         x1, y1, x2, y2 = map(int, doc_box)
-                        cv2.rectangle(full_annotated_frame, (x1, y1), (x2, y2), (255, 255, 0), 1)  # Cyan outline for all documents
+                        cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 255, 0), 1)  # Cyan outline for all documents
                 
                 # Draw detected tables/desks for debugging
                 for table_box in table_boxes:
                     x1, y1, x2, y2 = map(int, table_box)
-                    cv2.rectangle(full_annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)  # Green outline for tables
-                    cv2.putText(full_annotated_frame, 'Table/Desk', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)  # Green outline for tables
+                    cv2.putText(annotated_frame, 'Table/Desk', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
                 # Save frame data to MongoDB and prepare for Excel export
                 if anomaly_log:  # Only save frames with anomalies
                     # Encode frame as base64 for screenshot_data
-                    _, buffer = cv2.imencode('.jpg', full_annotated_frame)
+                    _, buffer = cv2.imencode('.jpg', annotated_frame)
                     screenshot_bytes = b""
                     if buffer is not None and len(buffer) > 0:
                         screenshot_data = base64.b64encode(buffer).decode('utf-8')
@@ -416,7 +404,7 @@ def process_video(video_path):
                         "screenshot_data": screenshot_data
                     })
 
-                last_annotated_frame = full_annotated_frame
+                last_annotated_frame = annotated_frame
             
             # Note: In production, we don't display the frame in a window
             # display_frame = last_annotated_frame if last_annotated_frame is not None else frame
