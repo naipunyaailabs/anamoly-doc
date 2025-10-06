@@ -656,104 +656,104 @@ async def get_anomaly_summary():
         client.close()
         raise HTTPException(status_code=500, detail=f"Error getting anomaly summary: {e}")
 
-@app.get("/anomalies/standing", response_model=List[AnomalyResponse])
-async def get_standing_anomalies(limit: int = 100):
-    """Get standing anomalies from MongoDB"""
-    collection, client = get_mongo_collection()
-    
-    try:
-        # Get documents with standing anomalies
-        documents = list(collection.find({
-            "anomaly_log": {
-                "$elemMatch": {
-                    "anomaly": "standing"
-                }
-            }
-        }).sort("timestamp", -1).limit(limit))
-        client.close()
-        
-        # Convert to response format
-        anomalies = []
-        for doc in documents:
-            anomalies.append(AnomalyResponse(
-                frame_id=doc["frame_id"],
-                timestamp=doc["timestamp"].isoformat() if isinstance(doc["timestamp"], datetime) else str(doc["timestamp"]),
-                video_time=doc.get("video_time", "N/A"),  # Add video time
-                total_anomalies=doc["total_anomalies"],
-                anomaly_log=doc["anomaly_log"],
-                screenshot_url=doc.get("screenshot_url")
-            ))
-        
-        return anomalies
-    except Exception as e:
-        client.close()
-        raise HTTPException(status_code=500, detail=f"Error reading from MongoDB: {e}")
+# @app.get("/anomalies/standing", response_model=List[AnomalyResponse])
+# async def get_standing_anomalies(limit: int = 100):
+#     """Get standing anomalies from MongoDB"""
+#     collection, client = get_mongo_collection()
+#     
+#     try:
+#         # Get documents with standing anomalies
+#         documents = list(collection.find({
+#             "anomaly_log": {
+#                 "$elemMatch": {
+#                     "anomaly": "standing"
+#                 }
+#             }
+#         }).sort("timestamp", -1).limit(limit))
+#         client.close()
+#         
+#         # Convert to response format
+#         anomalies = []
+#         for doc in documents:
+#             anomalies.append(AnomalyResponse(
+#                 frame_id=doc["frame_id"],
+#                 timestamp=doc["timestamp"].isoformat() if isinstance(doc["timestamp"], datetime) else str(doc["timestamp"]),
+#                 video_time=doc.get("video_time", "N/A"),  # Add video time
+#                 total_anomalies=doc["total_anomalies"],
+#                 anomaly_log=doc["anomaly_log"],
+#                 screenshot_url=doc.get("screenshot_url")
+#             ))
+#         
+#         return anomalies
+#     except Exception as e:
+#         client.close()
+#         raise HTTPException(status_code=500, detail=f"Error reading from MongoDB: {e}")
 
-@app.get("/anomalies/phone", response_model=List[AnomalyResponse])
-async def get_phone_anomalies(limit: int = 100):
-    """Get phone usage anomalies from MongoDB"""
-    collection, client = get_mongo_collection()
-    
-    try:
-        # Get documents with phone anomalies
-        documents = list(collection.find({
-            "anomaly_log": {
-                "$elemMatch": {
-                    "anomaly": "phone"
-                }
-            }
-        }).sort("timestamp", -1).limit(limit))
-        client.close()
-        
-        # Convert to response format
-        anomalies = []
-        for doc in documents:
-            anomalies.append(AnomalyResponse(
-                frame_id=doc["frame_id"],
-                timestamp=doc["timestamp"].isoformat() if isinstance(doc["timestamp"], datetime) else str(doc["timestamp"]),
-                video_time=doc.get("video_time", "N/A"),  # Add video time
-                total_anomalies=doc["total_anomalies"],
-                anomaly_log=doc["anomaly_log"],
-                screenshot_url=doc.get("screenshot_url")
-            ))
-        
-        return anomalies
-    except Exception as e:
-        client.close()
-        raise HTTPException(status_code=500, detail=f"Error reading from MongoDB: {e}")
+# @app.get("/anomalies/phone", response_model=List[AnomalyResponse])
+# async def get_phone_anomalies(limit: int = 100):
+#     """Get phone usage anomalies from MongoDB"""
+#     collection, client = get_mongo_collection()
+#     
+#     try:
+#         # Get documents with phone anomalies
+#         documents = list(collection.find({
+#             "anomaly_log": {
+#                 "$elemMatch": {
+#                     "anomaly": "phone"
+#                 }
+#             }
+#         }).sort("timestamp", -1).limit(limit))
+#         client.close()
+#         
+#         # Convert to response format
+#         anomalies = []
+#         for doc in documents:
+#             anomalies.append(AnomalyResponse(
+#                 frame_id=doc["frame_id"],
+#                 timestamp=doc["timestamp"].isoformat() if isinstance(doc["timestamp"], datetime) else str(doc["timestamp"]),
+#                 video_time=doc.get("video_time", "N/A"),  # Add video time
+#                 total_anomalies=doc["total_anomalies"],
+#                 anomaly_log=doc["anomaly_log"],
+#                 screenshot_url=doc.get("screenshot_url")
+#             ))
+#         
+#         return anomalies
+#     except Exception as e:
+#         client.close()
+#         raise HTTPException(status_code=500, detail=f"Error reading from MongoDB: {e}")
 
-@app.get("/anomalies/empty-chair", response_model=List[AnomalyResponse])
-async def get_empty_chair_anomalies(limit: int = 100):
-    """Get empty chair anomalies from MongoDB"""
-    collection, client = get_mongo_collection()
-    
-    try:
-        # Get documents with empty chair anomalies
-        documents = list(collection.find({
-            "anomaly_log": {
-                "$elemMatch": {
-                    "anomaly": "empty_chair"
-                }
-            }
-        }).sort("timestamp", -1).limit(limit))
-        client.close()
-        
-        # Convert to response format
-        anomalies = []
-        for doc in documents:
-            anomalies.append(AnomalyResponse(
-                frame_id=doc["frame_id"],
-                timestamp=doc["timestamp"].isoformat() if isinstance(doc["timestamp"], datetime) else str(doc["timestamp"]),
-                video_time=doc.get("video_time", "N/A"),  # Add video time
-                total_anomalies=doc["total_anomalies"],
-                anomaly_log=doc["anomaly_log"],
-                screenshot_url=doc.get("screenshot_url")
-            ))
-        
-        return anomalies
-    except Exception as e:
-        client.close()
-        raise HTTPException(status_code=500, detail=f"Error reading from MongoDB: {e}")
+# @app.get("/anomalies/empty-chair", response_model=List[AnomalyResponse])
+# async def get_empty_chair_anomalies(limit: int = 100):
+#     """Get empty chair anomalies from MongoDB"""
+#     collection, client = get_mongo_collection()
+#     
+#     try:
+#         # Get documents with empty chair anomalies
+#         documents = list(collection.find({
+#             "anomaly_log": {
+#                 "$elemMatch": {
+#                     "anomaly": "empty_chair"
+#                 }
+#             }
+#         }).sort("timestamp", -1).limit(limit))
+#         client.close()
+#         
+#         # Convert to response format
+#         anomalies = []
+#         for doc in documents:
+#             anomalies.append(AnomalyResponse(
+#                 frame_id=doc["frame_id"],
+#                 timestamp=doc["timestamp"].isoformat() if isinstance(doc["timestamp"], datetime) else str(doc["timestamp"]),
+#                 video_time=doc.get("video_time", "N/A"),  # Add video time
+#                 total_anomalies=doc["total_anomalies"],
+#                 anomaly_log=doc["anomaly_log"],
+#                 screenshot_url=doc.get("screenshot_url")
+#             ))
+#         
+#         return anomalies
+#     except Exception as e:
+#         client.close()
+#         raise HTTPException(status_code=500, detail=f"Error reading from MongoDB: {e}")
 
 @app.get("/anomalies/document", response_model=List[AnomalyResponse])
 async def get_document_anomalies(limit: int = 100):
