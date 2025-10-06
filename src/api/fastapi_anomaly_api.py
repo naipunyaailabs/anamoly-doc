@@ -198,7 +198,7 @@ def process_video_background(video_path: str):
         frame_count += 1
         
         # Print progress every 100 frames
-        if frame_count % 100 == 0:
+        if frame_count % 3 == 0:
             print(f"Processing frame {frame_count}/{total_frames}")
 
         max_width, max_height = config.MAX_VIDEO_WIDTH, config.MAX_VIDEO_HEIGHT
