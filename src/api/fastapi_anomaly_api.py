@@ -505,82 +505,57 @@ async def startup_event():
         print(f"Warning: Could not apply PyTorch safe globals patch: {e}")
     
     try:
-        if os.path.exists(config.POSE_MODEL_PATH):
-            # Try loading with safe globals first
-            try:
-                pose_model = YOLO(config.POSE_MODEL_PATH)
-                print("YOLO pose model loaded successfully")
-            except Exception as e:
-                print(f"Warning: Could not load YOLO pose model with safe globals: {e}")
-                # Fallback to loading with weights_only=False if we trust the source
-                print("Attempting to load with weights_only=False (only if you trust the source)")
-                from ultralytics import YOLO
-                import torch
-                # For PyTorch < 2.6, weights_only parameter doesn't exist or is False by default
-                torch_version = tuple(map(int, torch.__version__.split('.')[:2]))
-                if torch_version >= (2, 6):
-                    # For PyTorch 2.6+, we might need to use weights_only=False
-                    try:
-                        # Try to import the model with weights_only=False
-                        pose_model = YOLO(config.POSE_MODEL_PATH)
-                    except:
-                        # If that fails, try the context manager approach
-                        try:
-                            with torch.serialization.safe_globals([__import__('ultralytics.nn.tasks').nn.tasks.PoseModel]):
-                                pose_model = YOLO(config.POSE_MODEL_PATH)
-                        except:
-                            # Last resort: try to load with weights_only=False
-                            pose_model = YOLO(config.POSE_MODEL_PATH)
-                else:
-                    # For older PyTorch versions, just load normally
-                    pose_model = YOLO(config.POSE_MODEL_PATH)
-                print("YOLO pose model loaded successfully with fallback method")
-        else:
-            print(f"Warning: {config.POSE_MODEL_PATH} not found. Downloading...")
+        # Load pose model with proper error handling for PyTorch version
+        try:
             pose_model = YOLO(config.POSE_MODEL_PATH)
-            print("YOLO pose model downloaded and loaded successfully")
+            print("YOLO pose model loaded successfully")
+        except Exception as e:
+            print(f"Warning: Could not load YOLO pose model: {e}")
+            # For PyTorch < 2.6, just load normally
+            import torch
+            torch_version = tuple(map(int, torch.__version__.split('.')[:2]))
+            if torch_version < (2, 6):
+                # For older PyTorch versions, just load normally
+                pose_model = YOLO(config.POSE_MODEL_PATH)
+                print("YOLO pose model loaded successfully with direct method")
+            else:
+                raise e
             
-        if os.path.exists(config.OBJECT_MODEL_PATH):
-            # Try loading with safe globals first
-            try:
-                obj_model = YOLO(config.OBJECT_MODEL_PATH)
-                print("YOLO object detection model loaded successfully")
-            except Exception as e:
-                print(f"Warning: Could not load YOLO object detection model with safe globals: {e}")
-                # Fallback to loading with weights_only=False if we trust the source
-                print("Attempting to load with weights_only=False (only if you trust the source)")
-                from ultralytics import YOLO
-                import torch
-                # For PyTorch < 2.6, weights_only parameter doesn't exist or is False by default
-                torch_version = tuple(map(int, torch.__version__.split('.')[:2]))
-                if torch_version >= (2, 6):
-                    # For PyTorch 2.6+, we might need to use weights_only=False
-                    try:
-                        # Try to import the model with weights_only=False
-                        obj_model = YOLO(config.OBJECT_MODEL_PATH)
-                    except:
-                        # If that fails, try the context manager approach
-                        try:
-                            with torch.serialization.safe_globals([__import__('ultralytics.nn.tasks').nn.tasks.DetectionModel]):
-                                obj_model = YOLO(config.OBJECT_MODEL_PATH)
-                        except:
-                            # Last resort: try to load with weights_only=False
-                            obj_model = YOLO(config.OBJECT_MODEL_PATH)
-                else:
-                    # For older PyTorch versions, just load normally
-                    obj_model = YOLO(config.OBJECT_MODEL_PATH)
-                print("YOLO object detection model loaded successfully with fallback method")
-        else:
-            print(f"Warning: {config.OBJECT_MODEL_PATH} not found. Downloading...")
+        # Load object detection model with proper error handling for PyTorch version
+        try:
             obj_model = YOLO(config.OBJECT_MODEL_PATH)
-            print("YOLO object detection model downloaded and loaded successfully")
+            print("YOLO object detection model loaded successfully")
+        except Exception as e:
+            print(f"Warning: Could not load YOLO object detection model: {e}")
+            # For PyTorch < 2.6, just load normally
+            import torch
+            torch_version = tuple(map(int, torch.__version__.split('.')[:2]))
+            if torch_version < (2, 6):
+                # For older PyTorch versions, just load normally
+                obj_model = YOLO(config.OBJECT_MODEL_PATH)
+                print("YOLO object detection model loaded successfully with direct method")
+            else:
+                raise e
             
-        # Load document detection model (standard YOLOv8)
+        # Load document detection model with proper error handling
         document_model = None
         try:
             document_model = YOLO(config.DOCUMENT_MODEL_PATH)
-            # For documents, we'll detect books (class 63 in COCO dataset)
-            print("Standard YOLOv8 document detection model loaded successfully")
+            # Try to set classes - this might fail with WorldModel error
+            try:
+                document_model.set_classes([
+                    "paper", "papers", "document", "documents",
+                    "notebook", "book", "file", "folder", "binder", "envelope"
+                ])
+                print("YOLO-World document detection model loaded successfully")
+            except AttributeError as ae:
+                if "WorldModel" in str(ae):
+                    print("Warning: WorldModel not available, using standard YOLOv8 for document detection")
+                    # Fall back to standard YOLO model for document detection
+                    document_model = YOLO("yolov8s.pt")  # Standard model
+                    print("Standard YOLO model loaded for document detection")
+                else:
+                    raise ae
         except Exception as e:
             print(f"Warning: Could not load YOLO document detection model: {e}")
             print("Document detection will be disabled")

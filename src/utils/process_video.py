@@ -68,59 +68,39 @@ def process_video(video_path):
     config = Config()
     
     # --- Models and Video Path ---
-    # Load models with fallback for PyTorch security changes
+    # Load models with proper error handling for PyTorch version
     try:
+        # Load pose model
         try:
             pose_model = YOLO(config.POSE_MODEL_PATH)
+            print("YOLO pose model loaded successfully")
         except Exception as e:
-            print(f"Warning: Could not load YOLO pose model with safe globals: {e}")
-            # Fallback to loading with weights_only=False if we trust the source
-            print("Attempting to load with weights_only=False (only if you trust the source)")
+            print(f"Warning: Could not load YOLO pose model: {e}")
+            # For PyTorch < 2.6, just load normally
             import torch
-            # For PyTorch < 2.6, weights_only parameter doesn't exist or is False by default
             torch_version = tuple(map(int, torch.__version__.split('.')[:2]))
-            if torch_version >= (2, 6):
-                # For PyTorch 2.6+, we might need to use weights_only=False
-                try:
-                    # Try to import the model with weights_only=False
-                    pose_model = YOLO(config.POSE_MODEL_PATH)
-                except:
-                    # If that fails, try the context manager approach
-                    try:
-                        with torch.serialization.safe_globals([__import__('ultralytics.nn.tasks').nn.tasks.PoseModel]):
-                            pose_model = YOLO(config.POSE_MODEL_PATH)
-                    except:
-                        # Last resort: try to load with weights_only=False
-                        pose_model = YOLO(config.POSE_MODEL_PATH)
-            else:
+            if torch_version < (2, 6):
                 # For older PyTorch versions, just load normally
                 pose_model = YOLO(config.POSE_MODEL_PATH)
+                print("YOLO pose model loaded successfully with direct method")
+            else:
+                raise e
     
+        # Load object detection model
         try:
             obj_model = YOLO(config.OBJECT_MODEL_PATH)
+            print("YOLO object detection model loaded successfully")
         except Exception as e:
-            print(f"Warning: Could not load YOLO object detection model with safe globals: {e}")
-            # Fallback to loading with weights_only=False if we trust the source
-            print("Attempting to load with weights_only=False (only if you trust the source)")
+            print(f"Warning: Could not load YOLO object detection model: {e}")
+            # For PyTorch < 2.6, just load normally
             import torch
-            # For PyTorch < 2.6, weights_only parameter doesn't exist or is False by default
             torch_version = tuple(map(int, torch.__version__.split('.')[:2]))
-            if torch_version >= (2, 6):
-                # For PyTorch 2.6+, we might need to use weights_only=False
-                try:
-                    # Try to import the model with weights_only=False
-                    obj_model = YOLO(config.OBJECT_MODEL_PATH)
-                except:
-                    # If that fails, try the context manager approach
-                    try:
-                        with torch.serialization.safe_globals([__import__('ultralytics.nn.tasks').nn.tasks.DetectionModel]):
-                            obj_model = YOLO(config.OBJECT_MODEL_PATH)
-                    except:
-                        # Last resort: try to load with weights_only=False
-                        obj_model = YOLO(config.OBJECT_MODEL_PATH)
-            else:
+            if torch_version < (2, 6):
                 # For older PyTorch versions, just load normally
                 obj_model = YOLO(config.OBJECT_MODEL_PATH)
+                print("YOLO object detection model loaded successfully with direct method")
+            else:
+                raise e
     
         # Initialize YOLO-World for document detection with error handling
         document_model = None
@@ -131,77 +111,26 @@ def process_video(video_path):
         
         try:
             document_model = YOLO(config.DOCUMENT_MODEL_PATH)
-            document_model.set_classes(document_classes)
-            print("YOLO-World document detection model loaded successfully")
-        except Exception as e:
-            print(f"Warning: Could not load YOLO-World model with safe globals: {e}")
-            # Fallback to loading with weights_only=False if we trust the source
-            print("Attempting to load YOLO-World with weights_only=False (only if you trust the source)")
+            # Try to set classes - this might fail with WorldModel error
             try:
-                import torch
-                # Try to add WorldModel to safe globals
-                try:
-                    # First try from ultralytics.nn.tasks
-                    import ultralytics.nn.tasks as tasks
-                    if hasattr(tasks, 'WorldModel'):
-                        if hasattr(torch.serialization, 'add_safe_globals'):
-                            torch.serialization.add_safe_globals([tasks.WorldModel])
-                        elif hasattr(torch.serialization, 'safe_globals'):
-                            # Use context manager for older versions that have safe_globals but not add_safe_globals
-                            pass
-                except:
-                    pass
-                
-                # Then try from yolo_world (separate installation)
-                try:
-                    import yolo_world
-                    if hasattr(yolo_world, 'WorldModel'):
-                        if hasattr(torch.serialization, 'add_safe_globals'):
-                            torch.serialization.add_safe_globals([yolo_world.WorldModel])
-                        elif hasattr(torch.serialization, 'safe_globals'):
-                            # Use context manager for older versions that have safe_globals but not add_safe_globals
-                            pass
-                except:
-                    pass
-                
-                # For PyTorch < 2.6, weights_only parameter doesn't exist or is False by default
-                torch_version = tuple(map(int, torch.__version__.split('.')[:2]))
-                if torch_version >= (2, 6):
-                    # For PyTorch 2.6+, we might need to use weights_only=False
-                    try:
-                        # Try to import the model with weights_only=False
-                        from ultralytics import YOLO
-                        document_model = YOLO(config.DOCUMENT_MODEL_PATH)
-                    except:
-                        # If that fails, try the context manager approach
-                        try:
-                            import ultralytics.nn.tasks as tasks
-                            if hasattr(tasks, 'WorldModel'):
-                                with torch.serialization.safe_globals([tasks.WorldModel]):
-                                    from ultralytics import YOLO
-                                    document_model = YOLO(config.DOCUMENT_MODEL_PATH)
-                        except:
-                            # Try with yolo_world
-                            try:
-                                import yolo_world
-                                if hasattr(yolo_world, 'WorldModel'):
-                                    with torch.serialization.safe_globals([yolo_world.WorldModel]):
-                                        from ultralytics import YOLO
-                                        document_model = YOLO(config.DOCUMENT_MODEL_PATH)
-                            except:
-                                # Last resort: try to load with weights_only=False
-                                from ultralytics import YOLO
-                                document_model = YOLO(config.DOCUMENT_MODEL_PATH)
-                else:
-                    # For older PyTorch versions, just load normally
-                    from ultralytics import YOLO
-                    document_model = YOLO(config.DOCUMENT_MODEL_PATH)
-                
                 document_model.set_classes(document_classes)
-                print("YOLO-World document detection model loaded successfully with fallback method")
-            except Exception as fallback_e:
-                print(f"Warning: Could not load YOLO-World model for document detection: {fallback_e}")
-                print("Document detection will be disabled")
+                print("YOLO-World document detection model loaded successfully")
+            except AttributeError as ae:
+                if "WorldModel" in str(ae):
+                    print("Warning: WorldModel not available, using standard YOLOv8 for document detection")
+                    # Fall back to standard YOLO model for document detection
+                    document_model = YOLO("yolov8s.pt")  # Standard model
+                    print("Standard YOLO model loaded for document detection")
+                else:
+                    raise ae
+        except Exception as e:
+            print(f"Warning: Could not load YOLO document detection model: {e}")
+            print("Document detection will be disabled")
+            document_model = None
+
+    except Exception as e:
+        print(f"Error loading YOLO models: {e}")
+        return
 
     # Initialize temporal filter for document anomaly detection (less conservative)
     doc_temporal_filter = logic.TemporalDocumentFilter(buffer_size=8, anomaly_threshold=0.5)
