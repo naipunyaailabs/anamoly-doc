@@ -68,3 +68,17 @@ Each component now:
 - Padding uses neutral gray color (114,114,114) to minimize interference with detection
 - Coordinate transformations are mathematically precise to maintain annotation accuracy
 - Memory usage is optimized by processing at consistent intermediate resolution
+
+## Testing
+
+A test script `test_resolution_agnostic.py` has been created to verify the implementation works with various resolutions:
+- Standard VGA (480x640)
+- HD (720x1280)
+- Full HD (1080x1920)
+- Previously problematic resolution (448x832)
+- Mobile resolution (360x640)
+- Low resolution (240x320)
+- 2K (1440x2560)
+- 4K (2160x3840)
+
+The system correctly handles all these resolutions and maintains accurate coordinate mapping.

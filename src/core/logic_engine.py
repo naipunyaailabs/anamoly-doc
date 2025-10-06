@@ -643,7 +643,7 @@ def resize_frame_with_aspect_ratio(frame, target_size=640):
         target_size: Target size for the larger dimension
         
     Returns:
-        resized_frame: Resized frame
+        resized_frame: Resized frame with padding
         scale_ratio: Scale ratio used for resizing
         padding: Padding applied (top, bottom, left, right)
     """
@@ -668,8 +668,10 @@ def resize_frame_with_aspect_ratio(frame, target_size=640):
     resized_frame = cv2.resize(frame, (new_w, new_h))
     
     # Calculate padding to make it exactly target_size
-    pad_w = target_size - new_w
-    pad_h = target_size - new_h
+    # Use the larger of new_w and new_h as the reference for padding
+    max_dim = max(new_w, new_h)
+    pad_w = max_dim - new_w
+    pad_h = max_dim - new_h
     
     # Distribute padding evenly
     pad_left = pad_w // 2
