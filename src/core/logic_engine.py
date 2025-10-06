@@ -575,6 +575,7 @@ def safe_track_model(model, frame, classes=None, verbose=False, imgsz=None):
             return model.track(frame, persist=True, verbose=verbose, imgsz=imgsz)
     except cv2.error as e:
         if "prevPyr[level * lvlStep1].size() == nextPyr[level * lvlStep2].size()" in str(e):
+            print(f"Warning: Optical flow pyramid size mismatch. Switching to detection mode.")
             # Fallback to detection mode without tracking
             if classes is not None:
                 return model(frame, classes=classes, verbose=verbose, imgsz=imgsz)
@@ -583,6 +584,13 @@ def safe_track_model(model, frame, classes=None, verbose=False, imgsz=None):
         else:
             # Re-raise if it's a different error
             raise e
+    except Exception as e:
+        print(f"Warning: Model tracking failed: {e}")
+        # Fallback to detection mode for any other error
+        if classes is not None:
+            return model(frame, classes=classes, verbose=verbose, imgsz=imgsz)
+        else:
+            return model(frame, verbose=verbose, imgsz=imgsz)
 
 def safe_predict_model(model, frame, conf=0.15, iou=0.5, imgsz=640, verbose=False):
     """

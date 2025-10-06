@@ -26,6 +26,9 @@ from pathlib import Path
 # Add src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Import configuration
+from src.config.config import Config
+
 # Import local modules with proper paths
 import src.core.logic_engine as logic
 from src.core.minio_client import MinIOAnomalyStorage
@@ -236,6 +239,310 @@ def categorize_anomalies(anomaly_log):
     
     return standing_anomalies, phone_anomalies, empty_chair_anomalies, document_anomalies
 
+def process_video_and_store_anomalies(video_path, pose_model, obj_model, document_model=None):
+    """Process video and store anomalies (for batch processing)"""
+    # Configuration
+    config = Config()
+    
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        st.error(f"Error: Could not open video file {video_path}")
+        return None
+
+    # Get video properties
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    st.info(f"Video FPS: {fps}")
+
+    frame_count = 0
+    last_annotated_frame = None
+    tracker_to_display_id = {}
+    next_display_id = 0
+    processed_data = []
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    # Progress bar
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    while cap.isOpened():
+        success, frame = cap.read()
+        if not success:
+            break
+
+        frame_count += 1
+        
+        # Update progress
+        progress = frame_count / total_frames
+        progress_bar.progress(progress)
+        status_text.text(f"Processing frame {frame_count}/{total_frames}")
+
+        # Resize frame if needed for consistent processing
+        original_h, original_w = frame.shape[:2]
+        max_width, max_height = config.MAX_VIDEO_WIDTH, config.MAX_VIDEO_HEIGHT
+        h, w, _ = frame.shape
+        if w > max_width or h > max_height:
+            ratio = min(max_width / w, max_height / h)
+            frame = cv2.resize(frame, (int(w * ratio), int(h * ratio)))
+            # Store resized dimensions and ensure they are multiples of 32
+            resized_h, resized_w = frame.shape[:2]
+            # Adjust to be multiple of 32 to avoid warning
+            resized_h = (resized_h // 32) * 32
+            resized_w = (resized_w // 32) * 32
+            # If any dimension became 0, use a minimum size
+            if resized_h == 0:
+                resized_h = 32
+            if resized_w == 0:
+                resized_w = 32
+            # Resize again to ensure multiple of 32
+            frame = cv2.resize(frame, (resized_w, resized_h))
+        else:
+            # If no resizing needed, ensure dimensions are multiples of 32
+            resized_h, resized_w = h, w
+            resized_h = (resized_h // 32) * 32
+            resized_w = (resized_w // 32) * 32
+            # If any dimension became 0, use a minimum size
+            if resized_h == 0:
+                resized_h = 32
+            if resized_w == 0:
+                resized_w = 32
+            # Resize to ensure multiple of 32
+            if resized_h != h or resized_w != w:
+                frame = cv2.resize(frame, (resized_w, resized_h))
+        
+        # Process every Nth frame (based on configuration)
+        if frame_count % config.FRAME_PROCESSING_INTERVAL == 0:
+            # Use safe tracking with fallback to detection mode
+            pose_results = logic.safe_track_model(pose_model, frame, verbose=False, imgsz=[resized_h, resized_w])
+            obj_results = logic.safe_track_model(obj_model, frame, classes=[56], verbose=False, imgsz=[resized_h, resized_w])
+            table_results = logic.safe_track_model(obj_model, frame, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
+
+            # Generate the fully rendered frame once
+            fully_annotated_frame = pose_results[0].plot()
+            annotated_frame = frame.copy()
+            
+            person_boxes = pose_results[0].boxes.xyxy.cpu().numpy()
+            chair_boxes = obj_results[0].boxes.xyxy.cpu().numpy()
+            all_keypoints = pose_results[0].keypoints.xy.cpu().numpy()
+            
+            person_tracker_ids = np.array([])
+            if pose_results[0].boxes.id is not None:
+                person_tracker_ids = pose_results[0].boxes.id.cpu().numpy().astype(int)
+
+            current_display_ids = []
+            for tracker_id in person_tracker_ids:
+                if tracker_id not in tracker_to_display_id:
+                    tracker_to_display_id[tracker_id] = next_display_id
+                    next_display_id += 1
+                current_display_ids.append(tracker_to_display_id[tracker_id])
+
+            person_states = []
+            # Check if we have keypoints before processing
+            if len(all_keypoints) > 0:
+                for i, kpts in enumerate(all_keypoints):
+                    state = {
+                        'sitting': logic.is_sitting(kpts), 'standing': logic.is_standing(kpts),
+                        'using_phone': logic.is_using_phone(kpts), 'box': person_boxes[i] if i < len(person_boxes) else None,
+                        'id': current_display_ids[i] if i < len(current_display_ids) else -1
+                    }
+                    person_states.append(state)
+            else:
+                # Handle case where no people are detected
+                print("No people detected in this frame")
+                
+            sitting_count = sum(1 for p in person_states if p['sitting'])
+            standing_count = sum(1 for p in person_states if p['standing'])
+            is_sitting_norm = sitting_count > standing_count
+
+            # Collect anomalies for MongoDB storage
+            anomaly_log = []
+            anomalies_to_draw = []
+            for person in person_states:
+                if person['id'] == -1: continue
+                person_anomalies = []
+                if is_sitting_norm and person['standing']: 
+                    person_anomalies.append("standing")
+                if person['using_phone']: 
+                    person_anomalies.append("phone")
+                if person_anomalies:
+                    anomaly_str = ", ".join(person_anomalies)
+                    visual_label = f"P{person['id']}: " + " & ".join(a.title() for a in person_anomalies)
+                    anomalies_to_draw.append({'box': person['box'], 'label': visual_label})
+                    
+                    # Add to anomaly log for MongoDB
+                    anomaly_log.append({
+                        "anomaly": person_anomalies,
+                        "person": person['id']
+                    })
+            
+            # High-speed splicing for person-based anomalies
+            for anomaly in anomalies_to_draw:
+                box, label = anomaly['box'], anomaly['label']
+                x1, y1, x2, y2 = map(int, box)
+                # Copy the region with the skeleton from the fully rendered frame
+                annotated_frame[y1:y2, x1:x2] = fully_annotated_frame[y1:y2, x1:x2]
+                # Draw our custom box and label on top
+                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 165, 255), 2)
+                cv2.putText(annotated_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
+
+            # Draw empty chair anomalies
+            empty_chair_boxes = logic.find_empty_chairs(chair_boxes, person_boxes)
+            for box in empty_chair_boxes:
+                x1, y1, x2, y2 = map(int, box)
+                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                cv2.putText(annotated_frame, 'Empty Chair Anomaly', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                
+                # Add empty chair anomalies to log
+                anomaly_log.append({
+                    "anomaly": ["empty_chair"],
+                    "person": -1
+                })
+
+            # --- DOCUMENT ANOMALY DETECTION --- (only if document model is available)
+            if document_model is not None:
+                try:
+                    # Document detection using YOLO-World (optimized for CPU, lower confidence for better detection)
+                    doc_results = document_model.predict(frame, conf=0.15, iou=0.5, imgsz=640, verbose=False)
+                    
+                    # Process document anomalies only if detection was successful
+                    if doc_results is not None:
+                        # Extract document detection boxes
+                        document_boxes = doc_results[0].boxes.xyxy.cpu().numpy() if len(doc_results[0].boxes) > 0 else np.array([])
+                        
+                        # Only process document anomalies if we detected documents
+                        if len(document_boxes) > 0:
+                            # Detect tables/desks using multiple classes: 60=dining table, 72=tv (for desk-like objects)
+                            try:
+                                table_results = obj_model.track(frame, persist=True, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
+                            except cv2.error as e:
+                                if "prevPyr[level * lvlStep1].size() == nextPyr[level * lvlStep2].size()" in str(e):
+                                    print(f"Warning: Optical flow pyramid size mismatch for table detection. Switching to detection mode.")
+                                    # Fallback to detection mode without tracking
+                                    table_results = obj_model(frame, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
+                                else:
+                                    # Re-raise if it's a different error
+                                    raise e
+                            table_boxes = table_results[0].boxes.xyxy.cpu().numpy() if len(table_results[0].boxes) > 0 else np.array([])
+                            
+                            # Check for unattended documents on tables/desks (more lenient thresholds)
+                            has_doc_anomaly, unattended_docs = logic.detect_document_anomaly_enhanced(
+                                document_boxes, person_boxes, table_boxes, 
+                                proximity_threshold=250, table_overlap_threshold=0.05  # More lenient thresholds
+                            )
+                            
+                            if has_doc_anomaly and len(unattended_docs) > 0:
+                                print(f"ANOMALY: {len(unattended_docs)} Unattended Document(s)")
+                                
+                                # Add document anomalies to log
+                                anomaly_log.append({
+                                    "anomaly": ["unattended_document"],
+                                    "person": -1,
+                                    "count": len(unattended_docs)
+                                })
+                                
+                                # Draw unattended document boxes
+                                for doc_box in unattended_docs:
+                                    x1, y1, x2, y2 = map(int, doc_box)
+                                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 0, 255), 2)  # Magenta color
+                                    cv2.putText(annotated_frame, 'Unattended Document', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
+                            
+                            # Optionally draw all detected documents with a different color
+                            for doc_box in document_boxes:
+                                x1, y1, x2, y2 = map(int, doc_box)
+                                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 255, 0), 1)  # Cyan outline for all documents
+                        
+                            # Draw detected tables/desks for debugging
+                            for table_box in table_boxes:
+                                x1, y1, x2, y2 = map(int, table_box)
+                                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)  # Green outline for tables
+                                cv2.putText(annotated_frame, 'Table/Desk', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                except Exception as e:
+                    print(f"Warning: Document detection failed: {e}")
+
+            # Save frame data to MongoDB and prepare for display
+            if anomaly_log:  # Only save frames with anomalies
+                # Encode frame as base64 for screenshot_data (but don't store in MongoDB)
+                _, buffer = cv2.imencode('.jpg', annotated_frame)
+                if buffer is not None and len(buffer) > 0:
+                    screenshot_data = base64.b64encode(buffer).decode('utf-8')
+                    screenshot_bytes = buffer.tobytes()
+                else:
+                    screenshot_data = ""
+                    screenshot_bytes = b""
+                    print("Warning: Failed to encode frame as JPEG")
+                
+                # Extract anomaly types for storage
+                anomaly_types = []
+                for entry in anomaly_log:
+                    anomaly_types.extend(entry["anomaly"])
+                
+                # Calculate video time
+                video_time = format_video_time(frame_count / fps)
+                
+                # Create document with required data for MongoDB (without screenshot_data)
+                timestamp = datetime.now(timezone(timedelta(hours=5, minutes=30)))  # IST
+                document = {
+                    "frame_id": frame_count,
+                    "anomaly_log": anomaly_log,
+                    "timestamp": timestamp,
+                    "video_time": video_time,  # Add video time
+                    "total_anomalies": len(anomaly_log)
+                    # Removed screenshot_data to save MongoDB space
+                }
+                
+                # Upload to MinIO if available
+                minio_object_names = []
+                if st.session_state.minio_client is not None and len(screenshot_bytes) > 0:
+                    try:
+                        # Upload for each anomaly type
+                        for anomaly_type in set(anomaly_types):
+                            object_name = st.session_state.minio_client.upload_screenshot(
+                                screenshot_bytes,
+                                anomaly_type,
+                                timestamp,
+                                f"frame_{frame_count}.jpg"
+                            )
+                            minio_object_names.append({
+                                "anomaly_type": anomaly_type,
+                                "object_name": object_name
+                            })
+                        # Add MinIO references to document
+                        document["minio_object_names"] = minio_object_names
+                    except Exception as e:
+                        print(f"Error uploading to MinIO: {e}")
+                
+                # Insert into MongoDB
+                try:
+                    result = collection.insert_one(document)
+                    if result.inserted_id:
+                        print(f"Saved frame {frame_count} with {len(anomaly_log)} anomalies to MongoDB (ID: {result.inserted_id})")
+                        
+                        # Store data for display (including screenshot for immediate display)
+                        processed_data.append({
+                            "frame_id": frame_count,
+                            "timestamp": timestamp,
+                            "video_time": video_time,  # Add video time
+                            "anomaly_log": anomaly_log,
+                            "total_anomalies": len(anomaly_log),
+                            "screenshot_data": screenshot_data,  # Keep for immediate display
+                            "minio_object_names": minio_object_names
+                        })
+                except Exception as e:
+                    print(f"Error saving to MongoDB: {e}")
+
+        last_annotated_frame = annotated_frame
+    except Exception as e:
+        print(f"Error processing frame {frame_count}: {e}")
+        continue
+
+    cap.release()
+    client.close()
+    
+    progress_bar.empty()
+    status_text.empty()
+    
+    return processed_data
+
 def process_video_and_save_to_mongodb(video_path, progress_callback=None):
     """Process video and save anomalies to MongoDB"""
     # MongoDB connection using environment variables
@@ -407,286 +714,7 @@ def process_video_and_save_to_mongodb(video_path, progress_callback=None):
         st.error(f"Error loading YOLO models: {e}")
         return None
 
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        st.error(f"Error: Could not open video file {video_path}")
-        return None
-
-    # Get video properties
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    st.info(f"Video FPS: {fps}")
-
-    frame_count = 0
-    last_annotated_frame = None
-    tracker_to_display_id = {}
-    next_display_id = 0
-    processed_data = []
-
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-    # Progress bar
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-
-    while cap.isOpened():
-        success, frame = cap.read()
-        if not success:
-            break
-
-        frame_count += 1
-        
-        # Update progress
-        progress = frame_count / total_frames
-        progress_bar.progress(progress)
-        status_text.text(f"Processing frame {frame_count}/{total_frames}")
-
-        # Resize frame if needed for consistent processing
-        original_h, original_w = frame.shape[:2]
-        # Use dimensions that are multiples of 32 to avoid warnings
-        max_width, max_height = 1280, 736  # 736 is divisible by 32
-        h, w, _ = frame.shape
-        if w > max_width or h > max_height:
-            ratio = min(max_width / w, max_height / h)
-            # Ensure resulting dimensions are multiples of 32
-            new_w = int(w * ratio) // 32 * 32
-            new_h = int(h * ratio) // 32 * 32
-            frame = cv2.resize(frame, (new_w, new_h))
-            # Store resized dimensions
-            resized_h, resized_w = frame.shape[:2]
-        else:
-            # If no resizing needed, dimensions remain the same
-            resized_h, resized_w = h, w
-        
-        # Use safe tracking with fallback to detection mode
-        pose_results = logic.safe_track_model(pose_model, frame, verbose=False, imgsz=[resized_h, resized_w])
-        obj_results = logic.safe_track_model(obj_model, frame, classes=[56], verbose=False, imgsz=[resized_h, resized_w])
-        table_results = logic.safe_track_model(obj_model, frame, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
-
-        # Generate the fully rendered frame once
-        fully_annotated_frame = pose_results[0].plot()
-        annotated_frame = frame.copy()
-        
-        person_boxes = pose_results[0].boxes.xyxy.cpu().numpy()
-        chair_boxes = obj_results[0].boxes.xyxy.cpu().numpy()
-        all_keypoints = pose_results[0].keypoints.xy.cpu().numpy()
-        
-        person_tracker_ids = np.array([])
-        if pose_results[0].boxes.id is not None:
-            person_tracker_ids = pose_results[0].boxes.id.cpu().numpy().astype(int)
-
-        current_display_ids = []
-        for tracker_id in person_tracker_ids:
-            if tracker_id not in tracker_to_display_id:
-                tracker_to_display_id[tracker_id] = next_display_id
-                next_display_id += 1
-            current_display_ids.append(tracker_to_display_id[tracker_id])
-
-        person_states = []
-        # Check if we have keypoints before processing
-        if len(all_keypoints) > 0:
-            for i, kpts in enumerate(all_keypoints):
-                state = {
-                    'sitting': logic.is_sitting(kpts), 'standing': logic.is_standing(kpts),
-                    'using_phone': logic.is_using_phone(kpts), 'box': person_boxes[i] if i < len(person_boxes) else None,
-                    'id': current_display_ids[i] if i < len(current_display_ids) else -1
-                }
-                person_states.append(state)
-        else:
-            # Handle case where no people are detected
-            print("No people detected in this frame")
-            
-        sitting_count = sum(1 for p in person_states if p['sitting'])
-        standing_count = sum(1 for p in person_states if p['standing'])
-        is_sitting_norm = sitting_count > standing_count
-
-        # Collect anomalies for MongoDB storage
-        anomaly_log = []
-        anomalies_to_draw = []
-        for person in person_states:
-            if person['id'] == -1: continue
-            person_anomalies = []
-            if is_sitting_norm and person['standing']: 
-                person_anomalies.append("standing")
-            if person['using_phone']: 
-                person_anomalies.append("phone")
-            if person_anomalies:
-                anomaly_str = ", ".join(person_anomalies)
-                visual_label = f"P{person['id']}: " + " & ".join(a.title() for a in person_anomalies)
-                anomalies_to_draw.append({'box': person['box'], 'label': visual_label})
-                
-                # Add to anomaly log for MongoDB
-                anomaly_log.append({
-                    "anomaly": person_anomalies,
-                    "person": person['id']
-                })
-        
-        # High-speed splicing for person-based anomalies
-        for anomaly in anomalies_to_draw:
-            box, label = anomaly['box'], anomaly['label']
-            x1, y1, x2, y2 = map(int, box)
-            # Copy the region with the skeleton from the fully rendered frame
-            annotated_frame[y1:y2, x1:x2] = fully_annotated_frame[y1:y2, x1:x2]
-            # Draw our custom box and label on top
-            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 165, 255), 2)
-            cv2.putText(annotated_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
-
-        # Draw empty chair anomalies
-        empty_chair_boxes = logic.find_empty_chairs(chair_boxes, person_boxes)
-        for box in empty_chair_boxes:
-            x1, y1, x2, y2 = map(int, box)
-            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-            cv2.putText(annotated_frame, 'Empty Chair Anomaly', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-            
-            # Add empty chair anomalies to log
-            anomaly_log.append({
-                "anomaly": ["empty_chair"],
-                "person": -1
-            })
-
-        # --- DOCUMENT ANOMALY DETECTION --- (only if document model is available)
-        if document_model is not None:
-            try:
-                # Document detection using YOLO-World (optimized for CPU, lower confidence for better detection)
-                doc_results = document_model.predict(frame, conf=0.15, iou=0.5, imgsz=640, verbose=False)
-                
-                # Process document anomalies only if detection was successful
-                if doc_results is not None:
-                    # Extract document detection boxes
-                    document_boxes = doc_results[0].boxes.xyxy.cpu().numpy() if len(doc_results[0].boxes) > 0 else np.array([])
-                    
-                    # Only process document anomalies if we detected documents
-                    if len(document_boxes) > 0:
-                        # Detect tables/desks using multiple classes: 60=dining table, 72=tv (for desk-like objects)
-                        try:
-                            table_results = obj_model.track(frame, persist=True, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
-                        except cv2.error as e:
-                            if "prevPyr[level * lvlStep1].size() == nextPyr[level * lvlStep2].size()" in str(e):
-                                print(f"Warning: Optical flow pyramid size mismatch for table detection. Switching to detection mode.")
-                                # Fallback to detection mode without tracking
-                                table_results = obj_model(frame, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
-                            else:
-                                # Re-raise if it's a different error
-                                raise e
-                        table_boxes = table_results[0].boxes.xyxy.cpu().numpy() if len(table_results[0].boxes) > 0 else np.array([])
-                        
-                        # Check for unattended documents on tables/desks (more lenient thresholds)
-                        has_doc_anomaly, unattended_docs = logic.detect_document_anomaly_enhanced(
-                            document_boxes, person_boxes, table_boxes, 
-                            proximity_threshold=250, table_overlap_threshold=0.05  # More lenient thresholds
-                        )
-                        
-                        if has_doc_anomaly and len(unattended_docs) > 0:
-                            print(f"ANOMALY: {len(unattended_docs)} Unattended Document(s)")
-                            
-                            # Add document anomalies to log
-                            anomaly_log.append({
-                                "anomaly": ["unattended_document"],
-                                "person": -1,
-                                "count": len(unattended_docs)
-                            })
-                            
-                            # Draw unattended document boxes
-                            for doc_box in unattended_docs:
-                                x1, y1, x2, y2 = map(int, doc_box)
-                                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 0, 255), 2)  # Magenta color
-                                cv2.putText(annotated_frame, 'Unattended Document', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
-                        
-                        # Optionally draw all detected documents with a different color
-                        for doc_box in document_boxes:
-                            x1, y1, x2, y2 = map(int, doc_box)
-                            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 255, 0), 1)  # Cyan outline for all documents
-                        
-                        # Draw detected tables/desks for debugging
-                        for table_box in table_boxes:
-                            x1, y1, x2, y2 = map(int, table_box)
-                            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)  # Green outline for tables
-                            cv2.putText(annotated_frame, 'Table/Desk', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                except Exception as e:
-                    print(f"Warning: Document detection failed: {e}")
-
-        # Save frame data to MongoDB and prepare for display
-        if anomaly_log:  # Only save frames with anomalies
-            # Encode frame as base64 for screenshot_data (but don't store in MongoDB)
-            _, buffer = cv2.imencode('.jpg', annotated_frame)
-            if buffer is not None and len(buffer) > 0:
-                screenshot_data = base64.b64encode(buffer).decode('utf-8')
-                screenshot_bytes = buffer.tobytes()
-            else:
-                screenshot_data = ""
-                screenshot_bytes = b""
-                print("Warning: Failed to encode frame as JPEG")
-            
-            # Extract anomaly types for storage
-            anomaly_types = []
-            for entry in anomaly_log:
-                anomaly_types.extend(entry["anomaly"])
-            
-            # Calculate video time
-            video_time = format_video_time(frame_count / fps)
-            
-            # Create document with required data for MongoDB (without screenshot_data)
-            timestamp = datetime.now(timezone(timedelta(hours=5, minutes=30)))  # IST
-            document = {
-                "frame_id": frame_count,
-                "anomaly_log": anomaly_log,
-                "timestamp": timestamp,
-                "video_time": video_time,  # Add video time
-                "total_anomalies": len(anomaly_log)
-                # Removed screenshot_data to save MongoDB space
-            }
-            
-            # Upload to MinIO if available
-            minio_object_names = []
-            if st.session_state.minio_client is not None and len(screenshot_bytes) > 0:
-                try:
-                    # Upload for each anomaly type
-                    for anomaly_type in set(anomaly_types):
-                        object_name = st.session_state.minio_client.upload_screenshot(
-                            screenshot_bytes,
-                            anomaly_type,
-                            timestamp,
-                            f"frame_{frame_count}.jpg"
-                        )
-                        minio_object_names.append({
-                            "anomaly_type": anomaly_type,
-                            "object_name": object_name
-                        })
-                    # Add MinIO references to document
-                    document["minio_object_names"] = minio_object_names
-                except Exception as e:
-                    print(f"Error uploading to MinIO: {e}")
-            
-            # Insert into MongoDB
-            try:
-                result = collection.insert_one(document)
-                if result.inserted_id:
-                    print(f"Saved frame {frame_count} with {len(anomaly_log)} anomalies to MongoDB (ID: {result.inserted_id})")
-                    
-                    # Store data for display (including screenshot for immediate display)
-                    processed_data.append({
-                        "frame_id": frame_count,
-                        "timestamp": timestamp,
-                        "video_time": video_time,  # Add video time
-                        "anomaly_log": anomaly_log,
-                        "total_anomalies": len(anomaly_log),
-                        "screenshot_data": screenshot_data,  # Keep for immediate display
-                        "minio_object_names": minio_object_names
-                    })
-            except Exception as e:
-                print(f"Error saving to MongoDB: {e}")
-
-        last_annotated_frame = annotated_frame
-    except Exception as e:
-        print(f"Error processing frame {frame_count}: {e}")
-        continue
-
-    cap.release()
-    client.close()
-    
-    progress_bar.empty()
-    status_text.empty()
-    
-    return processed_data
+    return process_video_and_store_anomalies(video_path, pose_model, obj_model, document_model)
 
 def display_standing_anomalies(standing_anomalies, timestamps=None, video_times=None, screenshots=None, minio_data=None):
     """Display standing anomalies in a dedicated section"""

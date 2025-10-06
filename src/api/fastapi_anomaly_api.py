@@ -206,30 +206,37 @@ def process_video_background(video_path: str):
         if w > max_width or h > max_height:
             ratio = min(max_width / w, max_height / h)
             frame = cv2.resize(frame, (int(w * ratio), int(h * ratio)))
+            # Store resized dimensions and ensure they are multiples of 32
+            resized_h, resized_w = frame.shape[:2]
+            # Adjust to be multiple of 32 to avoid warning
+            resized_h = (resized_h // 32) * 32
+            resized_w = (resized_w // 32) * 32
+            # If any dimension became 0, use a minimum size
+            if resized_h == 0:
+                resized_h = 32
+            if resized_w == 0:
+                resized_w = 32
+            # Resize again to ensure multiple of 32
+            frame = cv2.resize(frame, (resized_w, resized_h))
+        else:
+            # If no resizing needed, ensure dimensions are multiples of 32
+            resized_h, resized_w = h, w
+            resized_h = (resized_h // 32) * 32
+            resized_w = (resized_w // 32) * 32
+            # If any dimension became 0, use a minimum size
+            if resized_h == 0:
+                resized_h = 32
+            if resized_w == 0:
+                resized_w = 32
+            # Resize to ensure multiple of 32
+            if resized_h != h or resized_w != w:
+                frame = cv2.resize(frame, (resized_w, resized_h))
             
         if frame_count % config.FRAME_PROCESSING_INTERVAL == 0:
             try:
-                # Resize frame if needed for consistent processing
-                original_h, original_w = frame.shape[:2]
-                # Use dimensions that are multiples of 32 to avoid warnings
-                max_width, max_height = 1280, 736  # 736 is divisible by 32
-                h, w, _ = frame.shape
-                if w > max_width or h > max_height:
-                    ratio = min(max_width / w, max_height / h)
-                    # Ensure resulting dimensions are multiples of 32
-                    new_w = int(w * ratio) // 32 * 32
-                    new_h = int(h * ratio) // 32 * 32
-                    frame = cv2.resize(frame, (new_w, new_h))
-                    # Store resized dimensions
-                    resized_h, resized_w = frame.shape[:2]
-                else:
-                    # If no resizing needed, dimensions remain the same
-                    resized_h, resized_w = h, w
-                
                 # Use safe tracking with fallback to detection mode
                 pose_results = logic.safe_track_model(pose_model, frame, verbose=False, imgsz=[resized_h, resized_w])
                 obj_results = logic.safe_track_model(obj_model, frame, classes=[56], verbose=False, imgsz=[resized_h, resized_w])
-                table_results = logic.safe_track_model(obj_model, frame, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
 
                 # Generate the fully rendered frame once
                 fully_annotated_frame = pose_results[0].plot()
@@ -326,7 +333,7 @@ def process_video_background(video_path: str):
                 # Process document anomalies only if document model is available and detection was successful
                 if document_model is not None and doc_results is not None:
                     try:
-                        # Extract document detection boxes
+                        # Extract document detection boxes (books represent documents)
                         document_boxes = doc_results[0].boxes.xyxy.cpu().numpy() if len(doc_results[0].boxes) > 0 else np.array([])
                         
                         # Initialize table_boxes as empty array
@@ -335,16 +342,7 @@ def process_video_background(video_path: str):
                         # Only process document anomalies if we detected documents
                         if len(document_boxes) > 0:
                             # Detect tables/desks using multiple classes: 60=dining table, 72=tv (for desk-like objects)
-                            try:
-                                table_results = obj_model.track(frame, persist=True, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
-                            except cv2.error as e:
-                                if "prevPyr[level * lvlStep1].size() == nextPyr[level * lvlStep2].size()" in str(e):
-                                    print(f"Warning: Optical flow pyramid size mismatch for table detection. Switching to detection mode.")
-                                    # Fallback to detection mode without tracking
-                                    table_results = obj_model(frame, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
-                                else:
-                                    # Re-raise if it's a different error
-                                    raise e
+                            table_results = logic.safe_track_model(obj_model, frame, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
                             table_boxes = table_results[0].boxes.xyxy.cpu().numpy() if len(table_results[0].boxes) > 0 else np.array([])
                             
                             # Check for unattended documents on tables/desks (more lenient thresholds)
@@ -577,80 +575,14 @@ async def startup_event():
             obj_model = YOLO(config.OBJECT_MODEL_PATH)
             print("YOLO object detection model downloaded and loaded successfully")
             
-        # Load document detection model (YOLO-World)
+        # Load document detection model (standard YOLOv8)
+        document_model = None
         try:
-            # Try loading with safe globals first
-            try:
-                document_model = YOLO(config.DOCUMENT_MODEL_PATH)
-                document_classes = [
-                    "paper", "papers", "document", "documents",
-                    "notebook", "book", "file", "folder", "binder", "envelope"
-                ]
-                document_model.set_classes(document_classes)
-                print("YOLO-World document detection model loaded successfully")
-            except Exception as e:
-                print(f"Warning: Could not load YOLO-World model with safe globals: {e}")
-                # Fallback to loading with weights_only=False if we trust the source
-                print("Attempting to load YOLO-World with weights_only=False (only if you trust the source)")
-                from ultralytics import YOLO
-                import torch
-                # Try to add WorldModel to safe globals
-                try:
-                    # First try from ultralytics.nn.tasks
-                    import ultralytics.nn.tasks as tasks
-                    if hasattr(tasks, 'WorldModel'):
-                        if hasattr(torch.serialization, 'add_safe_globals'):
-                            torch.serialization.add_safe_globals([tasks.WorldModel])
-                        elif hasattr(torch.serialization, 'safe_globals'):
-                            # Use context manager for older versions that have safe_globals but not add_safe_globals
-                            pass
-                except:
-                    pass
-                
-                # Then try from yolo_world (separate installation)
-                try:
-                    import yolo_world
-                    if hasattr(yolo_world, 'WorldModel'):
-                        if hasattr(torch.serialization, 'add_safe_globals'):
-                            torch.serialization.add_safe_globals([yolo_world.WorldModel])
-                        elif hasattr(torch.serialization, 'safe_globals'):
-                            # Use context manager for older versions that have safe_globals but not add_safe_globals
-                            pass
-                except:
-                    pass
-                
-                # For PyTorch < 2.6, weights_only parameter doesn't exist or is False by default
-                torch_version = tuple(map(int, torch.__version__.split('.')[:2]))
-                if torch_version >= (2, 6):
-                    # For PyTorch 2.6+, we might need to use weights_only=False
-                    try:
-                        # Try to import the model with weights_only=False
-                        document_model = YOLO(config.DOCUMENT_MODEL_PATH)
-                    except:
-                        # If that fails, try the context manager approach
-                        try:
-                            import ultralytics.nn.tasks as tasks
-                            if hasattr(tasks, 'WorldModel'):
-                                with torch.serialization.safe_globals([tasks.WorldModel]):
-                                    document_model = YOLO(config.DOCUMENT_MODEL_PATH)
-                        except:
-                            # Try with yolo_world
-                            try:
-                                import yolo_world
-                                if hasattr(yolo_world, 'WorldModel'):
-                                    with torch.serialization.safe_globals([yolo_world.WorldModel]):
-                                        document_model = YOLO(config.DOCUMENT_MODEL_PATH)
-                            except:
-                                # Last resort: try to load with weights_only=False
-                                document_model = YOLO(config.DOCUMENT_MODEL_PATH)
-                else:
-                    # For older PyTorch versions, just load normally
-                    document_model = YOLO(config.DOCUMENT_MODEL_PATH)
-                
-                document_model.set_classes(document_classes)
-                print("YOLO-World document detection model loaded successfully with fallback method")
+            document_model = YOLO(config.DOCUMENT_MODEL_PATH)
+            # For documents, we'll detect books (class 63 in COCO dataset)
+            print("Standard YOLOv8 document detection model loaded successfully")
         except Exception as e:
-            print(f"Warning: Could not load YOLO-World model for document detection: {e}")
+            print(f"Warning: Could not load YOLO document detection model: {e}")
             print("Document detection will be disabled")
             document_model = None
     except Exception as e:

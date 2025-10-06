@@ -28,7 +28,7 @@ class Config:
     
     # Video Processing Configuration
     MAX_VIDEO_WIDTH = int(os.getenv("MAX_VIDEO_WIDTH", "1280"))
-    MAX_VIDEO_HEIGHT = int(os.getenv("MAX_VIDEO_HEIGHT", "736"))  # Changed from 720 to 736 (multiple of 32)
+    MAX_VIDEO_HEIGHT = int(os.getenv("MAX_VIDEO_HEIGHT", "720"))
     FRAME_PROCESSING_INTERVAL = int(os.getenv("FRAME_PROCESSING_INTERVAL", "3"))
     
     # Model Files

@@ -231,28 +231,48 @@ def process_video(video_path):
             # Store original frame dimensions for consistent resizing
             original_h, original_w = frame.shape[:2]
             
-            # Use dimensions that are multiples of 32 to avoid warnings
-            max_width, max_height = 1280, 736  # 736 is divisible by 32
+            max_width, max_height = 1280, 720
             h, w, _ = frame.shape
             if w > max_width or h > max_height:
                 ratio = min(max_width / w, max_height / h)
-                # Ensure resulting dimensions are multiples of 32
-                new_w = int(w * ratio) // 32 * 32
-                new_h = int(h * ratio) // 32 * 32
-                frame = cv2.resize(frame, (new_w, new_h))
-                # Store resized dimensions
+                frame = cv2.resize(frame, (int(w * ratio), int(h * ratio)))
+                # Store resized dimensions and ensure they are multiples of 32
                 resized_h, resized_w = frame.shape[:2]
+                # Adjust to be multiple of 32 to avoid warning
+                resized_h = (resized_h // 32) * 32
+                resized_w = (resized_w // 32) * 32
+                # If any dimension became 0, use a minimum size
+                if resized_h == 0:
+                    resized_h = 32
+                if resized_w == 0:
+                    resized_w = 32
+                # Resize again to ensure multiple of 32
+                frame = cv2.resize(frame, (resized_w, resized_h))
             else:
-                # If no resizing needed, dimensions remain the same
+                # If no resizing needed, ensure dimensions are multiples of 32
                 resized_h, resized_w = h, w
+                resized_h = (resized_h // 32) * 32
+                resized_w = (resized_w // 32) * 32
+                # If any dimension became 0, use a minimum size
+                if resized_h == 0:
+                    resized_h = 32
+                if resized_w == 0:
+                    resized_w = 32
+                # Resize to ensure multiple of 32
+                if resized_h != h or resized_w != w:
+                    frame = cv2.resize(frame, (resized_w, resized_h))
                 
             # Process every 3rd frame
             if frame_count % 3 == 0:
-                # Use safe tracking with fallback to detection mode
-                pose_results = logic.safe_track_model(pose_model, frame, verbose=False, imgsz=[resized_h, resized_w])
-                obj_results = logic.safe_track_model(obj_model, frame, classes=[56], verbose=False, imgsz=[resized_h, resized_w])
-                # Detect tables/desks using multiple classes: 60=dining table, 72=tv (for desk-like objects)
-                table_results = logic.safe_track_model(obj_model, frame, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
+                try:
+                    # Use safe tracking with fallback to detection mode
+                    pose_results = logic.safe_track_model(pose_model, frame, verbose=False, imgsz=[resized_h, resized_w])
+                    obj_results = logic.safe_track_model(obj_model, frame, classes=[56], verbose=False, imgsz=[resized_h, resized_w])
+                    # Detect tables/desks using multiple classes: 60=dining table, 72=tv (for desk-like objects)
+                    table_results = logic.safe_track_model(obj_model, frame, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
+                except Exception as e:
+                    print(f"Error processing frame {frame_count}: {e}")
+                    continue
                 
                 # Document detection using YOLO-World (only if model loaded successfully)
                 doc_results = None
