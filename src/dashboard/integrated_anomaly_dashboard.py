@@ -401,61 +401,60 @@ def process_video_and_store_anomalies(video_path, pose_model, obj_model, documen
             # --- DOCUMENT ANOMALY DETECTION --- (only if document model is available)
             if document_model is not None:
                 try:
-                    # Document detection using YOLO-World (optimized for CPU, lower confidence for better detection)
-                    doc_results = document_model.predict(frame, conf=0.15, iou=0.5, imgsz=640, verbose=False)
+                    # Document detection using standard YOLOv8 model
+                    # Using class 63 (book) and 64 (clock) as proxies for documents
+                    # This follows the project's dependency management rule: Only pure PyPI ultralytics packages should be used
+                    doc_results = document_model.track(frame, persist=True, classes=[63, 64], verbose=False, imgsz=[resized_h, resized_w])
                     
-                    # Process document anomalies only if detection was successful
-                    if doc_results is not None:
-                        # Extract document detection boxes
-                        document_boxes = doc_results[0].boxes.xyxy.cpu().numpy() if len(doc_results[0].boxes) > 0 else np.array([])
+                    # Extract document detection boxes
+                    document_boxes = doc_results[0].boxes.xyxy.cpu().numpy() if len(doc_results[0].boxes) > 0 else np.array([])
+                    
+                    if len(document_boxes) > 0:
+                        # Detect tables/desks using multiple classes: 60=dining table, 72=tv (for desk-like objects)
+                        try:
+                            table_results = logic.safe_track_model(obj_model, frame, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
+                        except cv2.error as e:
+                            if "prevPyr[level * lvlStep1].size() == nextPyr[level * lvlStep2].size()" in str(e):
+                                print(f"Warning: Optical flow pyramid size mismatch for table detection. Switching to detection mode.")
+                                # Fallback to detection mode without tracking
+                                table_results = obj_model(frame, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
+                            else:
+                                # Re-raise if it's a different error
+                                raise e
+                        table_boxes = table_results[0].boxes.xyxy.cpu().numpy() if len(table_results[0].boxes) > 0 else np.array([])
                         
-                        # Only process document anomalies if we detected documents
-                        if len(document_boxes) > 0:
-                            # Detect tables/desks using multiple classes: 60=dining table, 72=tv (for desk-like objects)
-                            try:
-                                table_results = obj_model.track(frame, persist=True, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
-                            except cv2.error as e:
-                                if "prevPyr[level * lvlStep1].size() == nextPyr[level * lvlStep2].size()" in str(e):
-                                    print(f"Warning: Optical flow pyramid size mismatch for table detection. Switching to detection mode.")
-                                    # Fallback to detection mode without tracking
-                                    table_results = obj_model(frame, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
-                                else:
-                                    # Re-raise if it's a different error
-                                    raise e
-                            table_boxes = table_results[0].boxes.xyxy.cpu().numpy() if len(table_results[0].boxes) > 0 else np.array([])
+                        # Check for unattended documents on tables/desks (more lenient thresholds)
+                        has_doc_anomaly, unattended_docs = logic.detect_document_anomaly_enhanced(
+                            document_boxes, person_boxes, table_boxes, 
+                            proximity_threshold=250, table_overlap_threshold=0.05  # More lenient thresholds
+                        )
+                        
+                        if has_doc_anomaly and len(unattended_docs) > 0:
+                            print(f"ANOMALY: {len(unattended_docs)} Unattended Document(s)")
                             
-                            # Check for unattended documents on tables/desks (more lenient thresholds)
-                            has_doc_anomaly, unattended_docs = logic.detect_document_anomaly_enhanced(
-                                document_boxes, person_boxes, table_boxes, 
-                                proximity_threshold=250, table_overlap_threshold=0.05  # More lenient thresholds
-                            )
+                            # Add document anomalies to log
+                            anomaly_log.append({
+                                "anomaly": ["unattended_document"],
+                                "person": -1,
+                                "count": len(unattended_docs)
+                            })
                             
-                            if has_doc_anomaly and len(unattended_docs) > 0:
-                                print(f"ANOMALY: {len(unattended_docs)} Unattended Document(s)")
-                                
-                                # Add document anomalies to log
-                                anomaly_log.append({
-                                    "anomaly": ["unattended_document"],
-                                    "person": -1,
-                                    "count": len(unattended_docs)
-                                })
-                                
-                                # Draw unattended document boxes
-                                for doc_box in unattended_docs:
-                                    x1, y1, x2, y2 = map(int, doc_box)
-                                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 0, 255), 2)  # Magenta color
-                                    cv2.putText(annotated_frame, 'Unattended Document', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
-                            
-                            # Optionally draw all detected documents with a different color
-                            for doc_box in document_boxes:
+                            # Draw unattended document boxes
+                            for doc_box in unattended_docs:
                                 x1, y1, x2, y2 = map(int, doc_box)
-                                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 255, 0), 1)  # Cyan outline for all documents
-                        
-                            # Draw detected tables/desks for debugging
-                            for table_box in table_boxes:
-                                x1, y1, x2, y2 = map(int, table_box)
-                                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)  # Green outline for tables
-                                cv2.putText(annotated_frame, 'Table/Desk', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 0, 255), 2)  # Magenta color
+                                cv2.putText(annotated_frame, 'Unattended Document', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
+                    
+                    # Optionally draw all detected documents with a different color
+                    for doc_box in document_boxes:
+                        x1, y1, x2, y2 = map(int, doc_box)
+                        cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 255, 0), 1)  # Cyan outline for all documents
+                    
+                    # Draw detected tables/desks for debugging
+                    for table_box in table_boxes:
+                        x1, y1, x2, y2 = map(int, table_box)
+                        cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)  # Green outline for tables
+                        cv2.putText(annotated_frame, 'Table/Desk', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                 except Exception as e:
                     print(f"Warning: Document detection failed: {e}")
 
@@ -609,24 +608,13 @@ def process_video_and_save_to_mongodb(video_path, progress_callback=None):
                 raise e
             
         # Load document detection model with proper error handling
+        # Using standard YOLOv8 model instead of YOLO-World
+        # This follows the project's dependency management rule: Only pure PyPI ultralytics packages should be used
         document_model = None
         try:
-            document_model = YOLO(config.DOCUMENT_MODEL_PATH)
-            # Try to set classes - this might fail with WorldModel error
-            try:
-                document_model.set_classes([
-                    "paper", "papers", "document", "documents",
-                    "notebook", "book", "file", "folder", "binder", "envelope"
-                ])
-                print("YOLO-World document detection model loaded successfully")
-            except AttributeError as ae:
-                if "WorldModel" in str(ae):
-                    print("Warning: WorldModel not available, using standard YOLOv8 for document detection")
-                    # Fall back to standard YOLO model for document detection
-                    document_model = YOLO("yolov8s.pt")  # Standard model
-                    print("Standard YOLO model loaded for document detection")
-                else:
-                    raise ae
+            # Use standard YOLOv8 model for document detection instead of YOLO-World
+            document_model = YOLO(config.OBJECT_MODEL_PATH)  # Use yolov8s.pt for document detection
+            print("Standard YOLO model loaded for document detection")
         except Exception as e:
             print(f"Warning: Could not load YOLO document detection model: {e}")
             print("Document detection will be disabled")

@@ -102,7 +102,8 @@ def process_video(video_path):
             else:
                 raise e
     
-        # Initialize YOLO-World for document detection with error handling
+        # Load document detection model (using standard YOLOv8 instead of YOLO-World)
+        # This follows the project's dependency management rule: Only pure PyPI ultralytics packages should be used
         document_model = None
         document_classes = [
             "paper", "papers", "document", "documents",
@@ -110,19 +111,10 @@ def process_video(video_path):
         ]
         
         try:
-            document_model = YOLO(config.DOCUMENT_MODEL_PATH)
-            # Try to set classes - this might fail with WorldModel error
-            try:
-                document_model.set_classes(document_classes)
-                print("YOLO-World document detection model loaded successfully")
-            except AttributeError as ae:
-                if "WorldModel" in str(ae):
-                    print("Warning: WorldModel not available, using standard YOLOv8 for document detection")
-                    # Fall back to standard YOLO model for document detection
-                    document_model = YOLO("yolov8s.pt")  # Standard model
-                    print("Standard YOLO model loaded for document detection")
-                else:
-                    raise ae
+            # Use standard YOLOv8 model for document detection instead of YOLO-World
+            # This aligns with the project's dependency management rule
+            document_model = YOLO(config.OBJECT_MODEL_PATH)  # Use yolov8s.pt for document detection
+            print("Standard YOLO model loaded for document detection")
         except Exception as e:
             print(f"Warning: Could not load YOLO document detection model: {e}")
             print("Document detection will be disabled")
@@ -206,141 +198,51 @@ def process_video(video_path):
                 # Document detection using YOLO-World (only if model loaded successfully)
                 doc_results = None
                 if document_model is not None:
-                    # Use safe prediction with error handling
-                    doc_results = logic.safe_predict_model(document_model, frame, conf=0.15, iou=0.5, imgsz=640, verbose=False)
-                
-                # TODO: Re-enable phone detection when more reliable
-                # phone_results = obj_model.track(frame, persist=True, classes=[67], verbose=False)
-
-                # --- 1. Generate the fully rendered frame once (this is fast) ---
-                fully_annotated_frame = pose_results[0].plot()
-                # --- 2. Start with a clean frame for our selective display ---
-                annotated_frame = frame.copy()
-                
-                print("\n--- Anomaly Report ---")
-                
-                person_boxes = pose_results[0].boxes.xyxy.cpu().numpy()
-                chair_boxes = obj_results[0].boxes.xyxy.cpu().numpy()
-                # Extract table detection boxes
-                table_boxes = table_results[0].boxes.xyxy.cpu().numpy() if len(table_results[0].boxes) > 0 else np.array([])
-                # Extract document detection boxes
-                document_boxes = doc_results[0].boxes.xyxy.cpu().numpy() if doc_results is not None and len(doc_results[0].boxes) > 0 else np.array([])
-                # phone_boxes = phone_results[0].boxes.xyxy.cpu().numpy() if len(phone_results[0].boxes) > 0 else np.array([])
-                all_keypoints = pose_results[0].keypoints.xy.cpu().numpy()
-                
-                person_tracker_ids = np.array([])
-                if pose_results[0].boxes.id is not None:
-                    person_tracker_ids = pose_results[0].boxes.id.cpu().numpy().astype(int)
-
-                # Fix ID mapping to ensure sequential numbering
-                current_display_ids = []
-                for i in range(len(person_tracker_ids)):
-                    current_display_ids.append(i)  # Use sequential IDs: 0, 1, 2, 3...
-
-                person_states = []
-                # Check if we have keypoints before processing
-                if len(all_keypoints) > 0:
-                    for i, kpts in enumerate(all_keypoints):
-                        sitting = logic.is_sitting(kpts)
-                        standing = logic.is_standing(kpts)
-                        using_phone = logic.is_using_phone(kpts)
+                    try:
+                        # Document detection using standard YOLOv8 model
+                        # Using class 63 (book) and 64 (clock) as proxies for documents
+                        # This follows the project's dependency management rule: Only pure PyPI ultralytics packages should be used
+                        doc_results = document_model.track(frame, persist=True, classes=[63, 64], verbose=False, imgsz=[resized_h, resized_w])
                         
-                        person_id = current_display_ids[i] if i < len(current_display_ids) else i
+                        # Extract document detection boxes
+                        document_boxes = doc_results[0].boxes.xyxy.cpu().numpy() if len(doc_results[0].boxes) > 0 else np.array([])
                         
-                        state = {
-                            'sitting': sitting, 'standing': standing,
-                            'using_phone': using_phone, 'box': person_boxes[i] if i < len(person_boxes) else None,
-                            'id': person_id
-                        }
-                        person_states.append(state)
-                else:
-                    # Handle case where no people are detected
-                    print("No people detected in this frame")
-
-                sitting_count = sum(1 for p in person_states if p['sitting'])
-                standing_count = sum(1 for p in person_states if p['standing'])
-                is_sitting_norm = sitting_count > standing_count
-
-                # Collect anomalies for MongoDB storage
-                anomaly_log = []
-                anomalies_to_draw = []
-                for person in person_states:
-                    if person['id'] == -1: continue
-                    person_anomalies = []
-                    if is_sitting_norm and person['standing']: 
-                        person_anomalies.append("standing")
-                    if person['using_phone']: 
-                        person_anomalies.append("phone")
-                    if person_anomalies:
-                        anomaly_str = ", ".join(person_anomalies)
-                        print(f"Person {person['id']} : ANOMALY({anomaly_str})")
-                        visual_label = f"P{person['id']}: " + " & ".join(a.title() for a in person_anomalies)
-                        anomalies_to_draw.append({'box': person['box'], 'label': visual_label})
-                        
-                        # Add to anomaly log for MongoDB
-                        anomaly_log.append({
-                            "anomaly": person_anomalies,
-                            "person": person['id']
-                        })
-                
-                # --- 3. High-speed splicing for person-based anomalies ---
-                for anomaly in anomalies_to_draw:
-                    box, label = anomaly['box'], anomaly['label']
-                    x1, y1, x2, y2 = map(int, box)
-                    # Copy the region with the skeleton from the fully rendered frame
-                    annotated_frame[y1:y2, x1:x2] = fully_annotated_frame[y1:y2, x1:x2]
-                    # Draw our custom box and label on top
-                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 165, 255), 2)
-                    cv2.putText(annotated_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
-
-                # Draw empty chair anomalies (this is already fast)
-                empty_chair_boxes = logic.find_empty_chairs(chair_boxes, person_boxes)
-                for box in empty_chair_boxes:
-                    print("ANOMALY: Empty Chair")
-                    x1, y1, x2, y2 = map(int, box)
-                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                    cv2.putText(annotated_frame, 'Empty Chair Anomaly', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-                    
-                    # Add empty chair anomalies to log
-                    anomaly_log.append({
-                        "anomaly": ["empty_chair"],
-                        "person": -1
-                    })
-
-                # --- DOCUMENT ANOMALY DETECTION --- (only if document model is available)
-                if document_model is not None and doc_results is not None:
-                    # Check for unattended documents on tables/desks (more lenient thresholds)
-                    has_doc_anomaly, unattended_docs = logic.detect_document_anomaly_enhanced(
-                        document_boxes, person_boxes, table_boxes, 
-                        proximity_threshold=250, table_overlap_threshold=0.05  # More lenient thresholds
-                    )
-                    
-                    # Add to temporal filter
-                    doc_temporal_filter.add_detection(has_doc_anomaly)
-                    
-                    # Check if anomaly is stable over time
-                    stable_doc_anomaly = doc_temporal_filter.get_stable_anomaly()
-                    
-                    if stable_doc_anomaly and len(unattended_docs) > 0:
-                        print(f"ANOMALY: {len(unattended_docs)} Unattended Document(s)")
-                        
-                        # Add document anomalies to log
-                        anomaly_log.append({
-                            "anomaly": ["unattended_document"],
-                            "person": -1,
-                            "count": len(unattended_docs)
-                        })
-                        
-                        # Draw unattended document boxes
-                        for doc_box in unattended_docs:
-                            x1, y1, x2, y2 = map(int, doc_box)
-                            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 0, 255), 2)  # Magenta color
-                            cv2.putText(annotated_frame, 'Unattended Document', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
-                    
-                    # Optionally draw all detected documents with a different color
-                    for doc_box in document_boxes:
-                        x1, y1, x2, y2 = map(int, doc_box)
-                        cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 255, 0), 1)  # Cyan outline for all documents
+                        if len(document_boxes) > 0:
+                            # Check for unattended documents on tables/desks (more lenient thresholds)
+                            has_doc_anomaly, unattended_docs = logic.detect_document_anomaly_enhanced(
+                                document_boxes, person_boxes, table_boxes, 
+                                proximity_threshold=250, table_overlap_threshold=0.05  # More lenient thresholds
+                            )
+                            
+                            # Add to temporal filter
+                            doc_temporal_filter.add_detection(has_doc_anomaly)
+                            
+                            # Check if anomaly is stable over time
+                            stable_doc_anomaly = doc_temporal_filter.get_stable_anomaly()
+                            
+                            if stable_doc_anomaly and len(unattended_docs) > 0:
+                                print(f"ANOMALY: {len(unattended_docs)} Unattended Document(s)")
+                                
+                                # Add document anomalies to log
+                                anomaly_log.append({
+                                    "anomaly": ["unattended_document"],
+                                    "person": -1,
+                                    "count": len(unattended_docs)
+                                })
+                                
+                                # Draw unattended document boxes
+                                for doc_box in unattended_docs:
+                                    x1, y1, x2, y2 = map(int, doc_box)
+                                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 0, 255), 2)  # Magenta color
+                                    cv2.putText(annotated_frame, 'Unattended Document', (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
+                            
+                            # Optionally draw all detected documents with a different color
+                            for doc_box in document_boxes:
+                                x1, y1, x2, y2 = map(int, doc_box)
+                                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (255, 255, 0), 1)  # Cyan outline for all documents
+                    except Exception as e:
+                        print(f"Warning: Document detection failed: {e}")
+                        # Continue processing without document detection
                 
                 # Draw detected tables/desks for debugging
                 for table_box in table_boxes:
