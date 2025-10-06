@@ -1,0 +1,532 @@
+{
+  "openapi": "3.0.2",
+  "info": {
+    "title": "Crowd Anomaly Detection API",
+    "description": "RESTful API for processing videos and retrieving anomaly data",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "Root",
+        "description": "Root endpoint",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Root  Get",
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    },
+                    "version": {
+                      "title": "Version",
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/favicon.ico": {
+      "get": {
+        "summary": "Favicon",
+        "description": "Favicon endpoint to prevent 404 errors",
+        "operationId": "favicon_favicon_ico_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Favicon Favicon Ico Get",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health Check",
+        "description": "Health check endpoint",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Health Check Health Get",
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "title": "Status",
+                      "type": "string"
+                    },
+                    "mongodb": {
+                      "title": "Mongodb",
+                      "type": "string"
+                    },
+                    "error": {
+                      "title": "Error",
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/process-video/": {
+      "post": {
+        "summary": "Process Video",
+        "description": "Process uploaded video for anomaly detection",
+        "operationId": "process_video_process_video__post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "title": "File",
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessVideoResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/anomalies/": {
+      "get": {
+        "summary": "Get Anomalies",
+        "description": "Get recent anomalies from MongoDB",
+        "operationId": "get_anomalies_anomalies__get",
+        "parameters": [
+          {
+            "required": false,
+            "schema": {
+              "title": "Limit",
+              "type": "integer",
+              "default": 100
+            },
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Get Anomalies Anomalies  Get",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AnomalyResponse"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/anomalies/summary": {
+      "get": {
+        "summary": "Get Anomaly Summary",
+        "description": "Get summary statistics of anomalies",
+        "operationId": "get_anomaly_summary_anomalies_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnomalySummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/anomalies/standing": {
+      "get": {
+        "summary": "Get Standing Anomalies",
+        "description": "Get standing anomalies from MongoDB",
+        "operationId": "get_standing_anomalies_anomalies_standing_get",
+        "parameters": [
+          {
+            "required": false,
+            "schema": {
+              "title": "Limit",
+              "type": "integer",
+              "default": 100
+            },
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Get Standing Anomalies Anomalies Standing  Get",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AnomalyResponse"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/anomalies/phone": {
+      "get": {
+        "summary": "Get Phone Anomalies",
+        "description": "Get phone usage anomalies from MongoDB",
+        "operationId": "get_phone_anomalies_anomalies_phone_get",
+        "parameters": [
+          {
+            "required": false,
+            "schema": {
+              "title": "Limit",
+              "type": "integer",
+              "default": 100
+            },
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Get Phone Anomalies Anomalies Phone  Get",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AnomalyResponse"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/anomalies/empty-chair": {
+      "get": {
+        "summary": "Get Empty Chair Anomalies",
+        "description": "Get empty chair anomalies from MongoDB",
+        "operationId": "get_empty_chair_anomalies_anomalies_empty_chair_get",
+        "parameters": [
+          {
+            "required": false,
+            "schema": {
+              "title": "Limit",
+              "type": "integer",
+              "default": 100
+            },
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Get Empty Chair Anomalies Anomalies Empty Chair  Get",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AnomalyResponse"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/screenshots/{doc_id}": {
+      "get": {
+        "summary": "Get Screenshot",
+        "description": "Get screenshot image for a specific document",
+        "operationId": "get_screenshot_screenshots__doc_id__get",
+        "parameters": [
+          {
+            "required": true,
+            "schema": {
+              "title": "Doc Id",
+              "type": "string"
+            },
+            "name": "doc_id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/minio-images/": {
+      "get": {
+        "summary": "List All Minio Images",
+        "description": "List all images stored in MinIO",
+        "operationId": "list_all_minio_images_minio_images__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AnomalyResponse": {
+        "title": "AnomalyResponse",
+        "required": [
+          "frame_id",
+          "timestamp",
+          "total_anomalies",
+          "anomaly_log"
+        ],
+        "type": "object",
+        "properties": {
+          "frame_id": {
+            "title": "Frame Id",
+            "type": "integer"
+          },
+          "timestamp": {
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "video_time": {
+            "title": "Video Time",
+            "type": "string"
+          },
+          "total_anomalies": {
+            "title": "Total Anomalies",
+            "type": "integer"
+          },
+          "anomaly_log": {
+            "title": "Anomaly Log",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "anomaly": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "person": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "anomaly",
+                "person"
+              ]
+            }
+          },
+          "screenshot_url": {
+            "title": "Screenshot Url",
+            "type": "string"
+          }
+        }
+      },
+      "AnomalySummary": {
+        "title": "AnomalySummary",
+        "required": [
+          "total_frames",
+          "total_anomalies",
+          "avg_anomalies_per_frame"
+        ],
+        "type": "object",
+        "properties": {
+          "total_frames": {
+            "title": "Total Frames",
+            "type": "integer"
+          },
+          "total_anomalies": {
+            "title": "Total Anomalies",
+            "type": "integer"
+          },
+          "avg_anomalies_per_frame": {
+            "title": "Avg Anomalies Per Frame",
+            "type": "number"
+          }
+        }
+      },
+      "HTTPValidationError": {
+        "title": "HTTPValidationError",
+        "type": "object",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            }
+          }
+        }
+      },
+      "ProcessVideoResponse": {
+        "title": "ProcessVideoResponse",
+        "required": [
+          "message",
+          "total_frames_processed",
+          "total_anomalies_detected"
+        ],
+        "type": "object",
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "total_frames_processed": {
+            "title": "Total Frames Processed",
+            "type": "integer"
+          },
+          "total_anomalies_detected": {
+            "title": "Total Anomalies Detected",
+            "type": "integer"
+          }
+        }
+      },
+      "ValidationError": {
+        "title": "ValidationError",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "loc": {
+            "title": "Location",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

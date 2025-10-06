@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crowd Anomaly Detection API Documentation</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        header {
+            background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+            color: white;
+            padding: 2rem;
+            border-radius: 10px;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h1, h2, h3, h4 {
+            margin-top: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        h1 {
+            font-size: 2.5rem;
+            margin-top: 0;
+        }
+        h2 {
+            font-size: 2rem;
+            border-bottom: 3px solid #2575fc;
+            padding-bottom: 0.5rem;
+            color: #2c3e50;
+        }
+        h3 {
+            font-size: 1.5rem;
+            color: #3498db;
+        }
+        h4 {
+            font-size: 1.2rem;
+            color: #2c3e50;
+        }
+        .endpoint {
+            background-color: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-left: 5px solid #3498db;
+        }
+        .endpoint-method {
+            display: inline-block;
+            padding: 0.3rem 0.8rem;
+            border-radius: 4px;
+            font-weight: bold;
+            margin-right: 0.5rem;
+        }
+        .get {
+            background-color: #3498db;
+            color: white;
+        }
+        .post {
+            background-color: #2ecc71;
+            color: white;
+        }
+        .code-block {
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            padding: 1rem;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+            margin: 1rem 0;
+        }
+        .response-example {
+            background-color: #f1f8e9;
+            border-left: 4px solid #7cb342;
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 0 5px 5px 0;
+        }
+        .error-example {
+            background-color: #ffebee;
+            border-left: 4px solid #f44336;
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 0 5px 5px 0;
+        }
+        ul, ol {
+            padding-left: 1.5rem;
+        }
+        li {
+            margin-bottom: 0.5rem;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            background-color: white;
+            border-radius: 5px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        th, td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        th {
+            background-color: #3498db;
+            color: white;
+        }
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+        .model {
+            background-color: #e3f2fd;
+            border-left: 4px solid #1976d2;
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 0 5px 5px 0;
+        }
+        .schema {
+            background-color: #fff3e0;
+            border-left: 4px solid #ff9800;
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 0 5px 5px 0;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 2rem;
+            padding: 1rem;
+            color: #7f8c8d;
+            border-top: 1px solid #eee;
+        }
+        .toc {
+            background-color: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .toc ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+        .toc li {
+            margin-bottom: 0.5rem;
+        }
+        .toc a {
+            text-decoration: none;
+            color: #3498db;
+            transition: color 0.3s;
+        }
+        .toc a:hover {
+            color: #2980b9;
+            text-decoration: underline;
+        }
+        .anomaly-types {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+        .anomaly-type {
+            background-color: white;
+            border-radius: 8px;
+            padding: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-top: 3px solid #3498db;
+        }
+        .anomaly-type h4 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Crowd Anomaly Detection API Documentation</h1>
+        <p>RESTful web service for processing videos to detect anomalies and retrieving stored anomaly data</p>
+    </header>
+
+    <div class="toc">
+        <h3>Table of Contents</h3>
+        <ul>
+            <li><a href="#overview">Overview</a></li>
+            <li><a href="#base-url">Base URL</a></li>
+            <li><a href="#authentication">Authentication</a></li>
+            <li><a href="#error-responses">Error Responses</a></li>
+            <li><a href="#endpoints">API Endpoints</a>
+                <ul>
+                    <li><a href="#root">Root Endpoint</a></li>
+                    <li><a href="#about">About Endpoint</a></li>
+                    <li><a href="#health">Health Check</a></li>
+                    <li><a href="#process-video">Process Video</a></li>
+                    <li><a href="#get-anomalies">Get Recent Anomalies</a></li>
+                    <li><a href="#anomaly-summary">Get Anomaly Summary</a></li>
+                    <li><a href="#standing-anomalies">Get Standing Anomalies</a></li>
+                    <li><a href="#phone-anomalies">Get Phone Usage Anomalies</a></li>
+                    <li><a href="#empty-chair-anomalies">Get Empty Chair Anomalies</a></li>
+                    <li><a href="#document-anomalies">Get Document Anomalies</a></li>
+                    <li><a href="#screenshot">Get Screenshot by Document ID</a></li>
+                    <li><a href="#minio-images">List All MinIO Images</a></li>
+                </ul>
+            </li>
+            <li><a href="#data-models">Data Models</a></li>
+            <li><a href="#mongodb-schema">MongoDB Schema</a></li>
+            <li><a href="#anomaly-types">Anomaly Types</a></li>
+            <li><a href="#video-formats">Supported Video Formats</a></li>
+            <li><a href="#configuration">Configuration</a></li>
+            <li><a href="#running-api">Running the API</a></li>
+            <li><a href="#interactive-docs">Interactive Documentation</a></li>
+        </ul>
+    </div>
+
+    <section id="overview">
+        <h2>Overview</h2>
+        <p>The Crowd Anomaly Detection API is a RESTful web service built with FastAPI that provides endpoints for processing videos to detect anomalies and retrieving stored anomaly data. The API uses computer vision models to identify behavioral and environmental anomalies in crowd scenarios.</p>
+    </section>
+
+    <section id="base-url">
+        <h2>Base URL</h2>
+        <div class="code-block">
+            https://anamoly.docapture.com
+        </div>
+        <p>For Docker deployments, the API will be available at the configured host and port.</p>
+    </section>
+
+    <section id="authentication">
+        <h2>Authentication</h2>
+        <p>The API does not currently require authentication for any endpoints.</p>
+    </section>
+
+    <section id="error-responses">
+        <h2>Error Responses</h2>
+        <p>All error responses follow this format:</p>
+        <div class="code-block">
+{
+  "detail": "Error message describing what went wrong"
+}
+        </div>
+        <p>Common HTTP status codes:</p>
+        <ul>
+            <li><code>200</code>: Success</li>
+            <li><code>400</code>: Bad Request (invalid input)</li>
+            <li><code>404</code>: Not Found</li>
+            <li><code>500</code>: Internal Server Error</li>
+        </ul>
+    </section>
+
+    <section id="endpoints">
+        <h2>API Endpoints</h2>
+
+        <div id="root" class="endpoint">
+            <h3>1. Root Endpoint</h3>
+            <h4>GET <code>/</code></h4>
+            <p>Returns basic information about the API.</p>
+            <div class="response-example">
+                <strong>Response:</strong>
+                <div class="code-block">
+{
+  "message": "Crowd Anomaly Detection API",
+  "version": "1.0.0"
+}
+                </div>
+            </div>
+        </div>
+
+        <div id="about" class="endpoint">
+            <h3>2. About Endpoint</h3>
+            <h4>GET <code>/about</code></h4>
+            <p>Returns the complete API documentation in HTML format.</p>
+            <div class="response-example">
+                <strong>Response:</strong>
+                <p>Returns HTML content with complete API documentation</p>
+            </div>
+        </div>
+
+        <div id="health" class="endpoint">
+            <h3>3. Health Check</h3>
+            <h4>GET <code>/health</code></h4>
+            <p>Returns the health status of the API and its dependencies.</p>
+            <div class="response-example">
+                <strong>Response:</strong>
+                <div class="code-block">
+{
+  "status": "healthy",
+  "mongodb": "connected"
+}
+                </div>
+            </div>
+            <div class="error-example">
+                <strong>Error Response:</strong>
+                <div class="code-block">
+{
+  "status": "unhealthy",
+  "error": "Error message"
+}
+                </div>
+            </div>
+        </div>
+
+        <div id="process-video" class="endpoint">
+            <h3>4. Process Video</h3>
+            <h4>POST <code>/process-video/</code></h4>
+            <p>Processes an uploaded video file for anomaly detection. The processing happens in the background.</p>
+            <p><span class="endpoint-method post">POST</span> <strong>Request:</strong></p>
+            <ul>
+                <li><strong>Content-Type:</strong> multipart/form-data</li>
+                <li><strong>Body:</strong>
+                    <ul>
+                        <li><code>file</code>: Video file (mp4, avi, mov, mkv formats supported)</li>
+                        <li><strong>Maximum file size:</strong> 100MB</li>
+                    </ul>
+                </li>
+            </ul>
+            <div class="response-example">
+                <strong>Response:</strong>
+                <div class="code-block">
+{
+  "message": "Video processing started in background",
+  "total_frames_processed": 0,
+  "total_anomalies_detected": 0
+}
+                </div>
+            </div>
+            <div class="error-example">
+                <strong>Error Responses:</strong>
+                <ul>
+                    <li><code>400 Bad Request</code>: Invalid file type or file size exceeds limit</li>
+                    <li><code>500 Internal Server Error</code>: Processing error</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="get-anomalies" class="endpoint">
+            <h3>5. Get Recent Anomalies</h3>
+            <h4>GET <code>/anomalies/</code></h4>
+            <p>Retrieves recent anomalies from MongoDB.</p>
+            <p><strong>Query Parameters:</strong></p>
+            <ul>
+                <li><code>limit</code> (optional, integer, default: 100): Maximum number of anomalies to return</li>
+            </ul>
+            <div class="response-example">
+                <strong>Response:</strong>
+                <div class="code-block">
+[
+  {
+    "frame_id": 123,
+    "timestamp": "2025-09-17T10:30:45.123456+05:30",
+    "video_time": "00:00:05",
+    "total_anomalies": 2,
+    "anomaly_log": [
+      {
+        "anomaly": ["standing", "phone"],
+        "person": 1
+      }
+    ],
+    "screenshot_url": "https://storage.docapture.com/standing/frame_123.jpg"
+  }
+]
+                </div>
+            </div>
+            <div class="error-example">
+                <strong>Error Response:</strong>
+                <ul>
+                    <li><code>500 Internal Server Error</code>: Database connection or query error</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="anomaly-summary" class="endpoint">
+            <h3>6. Get Anomaly Summary</h3>
+            <h4>GET <code>/anomalies/summary</code></h4>
+            <p>Retrieves summary statistics of all anomalies.</p>
+            <div class="response-example">
+                <strong>Response:</strong>
+                <div class="code-block">
+{
+  "total_frames": 1500,
+  "total_anomalies": 42,
+  "avg_anomalies_per_frame": 0.028
+}
+                </div>
+            </div>
+            <div class="error-example">
+                <strong>Error Response:</strong>
+                <ul>
+                    <li><code>500 Internal Server Error</code>: Database connection or query error</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="standing-anomalies" class="endpoint">
+            <h3>7. Get Standing Anomalies</h3>
+            <h4>GET <code>/anomalies/standing</code></h4>
+            <p>Retrieves anomalies where people are standing when they should be sitting.</p>
+            <p><strong>Query Parameters:</strong></p>
+            <ul>
+                <li><code>limit</code> (optional, integer, default: 100): Maximum number of anomalies to return</li>
+            </ul>
+            <div class="response-example">
+                <strong>Response:</strong>
+                <div class="code-block">
+[
+  {
+    "frame_id": 123,
+    "timestamp": "2025-09-17T10:30:45.123456+05:30",
+    "video_time": "00:00:05",
+    "total_anomalies": 1,
+    "anomaly_log": [
+      {
+        "anomaly": ["standing"],
+        "person": 1
+      }
+    ],
+    "screenshot_url": "https://storage.docapture.com/standing/frame_123.jpg"
+  }
+]
+                </div>
+            </div>
+            <div class="error-example">
+                <strong>Error Response:</strong>
+                <ul>
+                    <li><code>500 Internal Server Error</code>: Database connection or query error</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="phone-anomalies" class="endpoint">
+            <h3>8. Get Phone Usage Anomalies</h3>
+            <h4>GET <code>/anomalies/phone</code></h4>
+            <p>Retrieves anomalies where people are using phones in restricted areas.</p>
+            <p><strong>Query Parameters:</strong></p>
+            <ul>
+                <li><code>limit</code> (optional, integer, default: 100): Maximum number of anomalies to return</li>
+            </ul>
+            <div class="response-example">
+                <strong>Response:</strong>
+                <div class="code-block">
+[
+  {
+    "frame_id": 123,
+    "timestamp": "2025-09-17T10:30:45.123456+05:30",
+    "video_time": "00:00:05",
+    "total_anomalies": 1,
+    "anomaly_log": [
+      {
+        "anomaly": ["phone"],
+        "person": 1
+      }
+    ],
+    "screenshot_url": "https://storage.docapture.com/phone/frame_123.jpg"
+  }
+]
+                </div>
+            </div>
+            <div class="error-example">
+                <strong>Error Response:</strong>
+                <ul>
+                    <li><code>500 Internal Server Error</code>: Database connection or query error</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="empty-chair-anomalies" class="endpoint">
+            <h3>9. Get Empty Chair Anomalies</h3>
+            <h4>GET <code>/anomalies/empty-chair</code></h4>
+            <p>Retrieves anomalies where chairs are empty when they should be occupied.</p>
+            <p><strong>Query Parameters:</strong></p>
+            <ul>
+                <li><code>limit</code> (optional, integer, default: 100): Maximum number of anomalies to return</li>
+            </ul>
+            <div class="response-example">
+                <strong>Response:</strong>
+                <div class="code-block">
+[
+  {
+    "frame_id": 123,
+    "timestamp": "2025-09-17T10:30:45.123456+05:30",
+    "video_time": "00:00:05",
+    "total_anomalies": 1,
+    "anomaly_log": [
+      {
+        "anomaly": ["empty_chair"],
+        "person": -1
+      }
+    ],
+    "screenshot_url": "https://storage.docapture.com/empty_chair/frame_123.jpg"
+  }
+]
+                </div>
+            </div>
+            <div class="error-example">
+                <strong>Error Response:</strong>
+                <ul>
+                    <li><code>500 Internal Server Error</code>: Database connection or query error</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="document-anomalies" class="endpoint">
+            <h3>10. Get Document Anomalies</h3>
+            <h4>GET <code>/anomalies/document</code></h4>
+            <p>Retrieves anomalies where documents are unattended on tables or desks.</p>
+            <p><strong>Query Parameters:</strong></p>
+            <ul>
+                <li><code>limit</code> (optional, integer, default: 100): Maximum number of anomalies to return</li>
+            </ul>
+            <div class="response-example">
+                <strong>Response:</strong>
+                <div class="code-block">
+[
+  {
+    "frame_id": 123,
+    "timestamp": "2025-09-17T10:30:45.123456+05:30",
+    "video_time": "00:00:05",
+    "total_anomalies": 1,
+    "anomaly_log": [
+      {
+        "anomaly": ["unattended_document"],
+        "person": -1,
+        "count": 2
+      }
+    ],
+    "screenshot_url": "https://storage.docapture.com/unattended_document/frame_123.jpg"
+  }
+]
+                </div>
+            </div>
+            <div class="error-example">
+                <strong>Error Response:</strong>
+                <ul>
+                    <li><code>500 Internal Server Error</code>: Database connection or query error</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="screenshot" class="endpoint">
+            <h3>11. Get Screenshot by Document ID</h3>
+            <h4>GET <code>/screenshots/{doc_id}</code></h4>
+            <p>Retrieves the screenshot image for a specific anomaly document.</p>
+            <p><strong>Path Parameters:</strong></p>
+            <ul>
+                <li><code>doc_id</code>: MongoDB document ID</li>
+            </ul>
+            <div class="response-example">
+                <strong>Response:</strong>
+                <p>Returns JPEG image data directly</p>
+            </div>
+            <div class="error-example">
+                <strong>Error Responses:</strong>
+                <ul>
+                    <li><code>404 Not Found</code>: Document not found or screenshot not available</li>
+                    <li><code>500 Internal Server Error</code>: Error retrieving or decoding screenshot</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="minio-images" class="endpoint">
+            <h3>12. List All MinIO Images</h3>
+            <h4>GET <code>/minio-images/</code></h4>
+            <p>Lists all images stored in MinIO, organized by anomaly type.</p>
+            <div class="response-example">
+                <strong>Response:</strong>
+                <div class="code-block">
+{
+  "screenshots": [
+    {
+      "object_name": "standing/frame_123.jpg",
+      "anomaly_type": "standing",
+      "frame_info": "frame",
+      "url": "https://storage.docapture.com/standing/frame_123.jpg"
+    }
+  ]
+}
+                </div>
+            </div>
+            <div class="error-example">
+                <strong>Error Response:</strong>
+                <ul>
+                    <li><code>500 Internal Server Error</code>: Error retrieving MinIO images</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <section id="data-models">
+        <h2>Data Models</h2>
+
+        <div class="model">
+            <h3>AnomalyResponse</h3>
+            <div class="code-block">
+{
+  "frame_id": 123,
+  "timestamp": "2025-09-17T10:30:45.123456+05:30",
+  "video_time": "00:00:05",
+  "total_anomalies": 2,
+  "anomaly_log": [
+    {
+      "anomaly": ["standing", "phone"],
+      "person": 1
+    }
+  ],
+  "screenshot_url": "https://storage.docapture.com/standing/frame_123.jpg"
+}
+            </div>
+        </div>
+
+        <div class="model">
+            <h3>ProcessVideoResponse</h3>
+            <div class="code-block">
+{
+  "message": "Video processing started in background",
+  "total_frames_processed": 0,
+  "total_anomalies_detected": 0
+}
+            </div>
+        </div>
+
+        <div class="model">
+            <h3>AnomalySummary</h3>
+            <div class="code-block">
+{
+  "total_frames": 1500,
+  "total_anomalies": 42,
+  "avg_anomalies_per_frame": 0.028
+}
+            </div>
+        </div>
+    </section>
+
+    <section id="mongodb-schema">
+        <h2>MongoDB Schema</h2>
+        <p>Anomalies are stored in MongoDB with the following structure:</p>
+        <div class="schema">
+            <div class="code-block">
+{
+  "frame_id": 123,
+  "anomaly_log": [
+    {
+      "anomaly": ["standing", "phone"],
+      "person": 1
+    }
+  ],
+  "timestamp": "2025-09-17T10:30:45.123Z",
+  "video_time": "00:00:05",
+  "total_anomalies": 2,
+  "screenshot_url": "https://storage.docapture.com/standing/frame_123.jpg",
+  "minio_object_names": [
+    {
+      "anomaly_type": "standing",
+      "object_name": "standing/frame_123.jpg"
+    },
+    {
+      "anomaly_type": "phone",
+      "object_name": "phone/frame_123.jpg"
+    }
+  ]
+}
+            </div>
+        </div>
+    </section>
+
+    <section id="anomaly-types">
+        <h2>Anomaly Types</h2>
+        <p>The system detects four types of anomalies:</p>
+        <div class="anomaly-types">
+            <div class="anomaly-type">
+                <h4>1. standing</h4>
+                <p>Person is standing when the majority are sitting</p>
+            </div>
+            <div class="anomaly-type">
+                <h4>2. phone</h4>
+                <p>Person is using a phone in a restricted area</p>
+            </div>
+            <div class="anomaly-type">
+                <h4>3. empty_chair</h4>
+                <p>Chair is empty when it should be occupied</p>
+            </div>
+            <div class="anomaly-type">
+                <h4>4. unattended_document</h4>
+                <p>Document is left unattended on a table or desk</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="video-formats">
+        <h2>Supported Video Formats</h2>
+        <ul>
+            <li>MP4</li>
+            <li>AVI</li>
+            <li>MOV</li>
+            <li>MKV</li>
+        </ul>
+    </section>
+
+    <section id="configuration">
+        <h2>Configuration</h2>
+        <p>The API can be configured through environment variables:</p>
+        <ul>
+            <li><code>MONGO_URI</code>: MongoDB connection string</li>
+            <li><code>DB_NAME</code>: Database name (default: "crowd_db")</li>
+            <li><code>COLLECTION_NAME</code>: Collection name (default: "crowd_anomalies")</li>
+            <li><code>MINIO_ENDPOINT</code>: MinIO server endpoint</li>
+            <li><code>MINIO_ACCESS_KEY</code>: MinIO access key</li>
+            <li>

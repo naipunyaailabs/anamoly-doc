@@ -1,0 +1,10 @@
+__pycache__
+
+crowd/
+videos/
+myvenv/
+scripts/
+lib/
+share/
+include/
+
