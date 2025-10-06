@@ -203,26 +203,44 @@ def process_video_background(video_path: str):
 
         max_width, max_height = config.MAX_VIDEO_WIDTH, config.MAX_VIDEO_HEIGHT
         h, w, _ = frame.shape
-        
-        # Resize frame while maintaining aspect ratio if needed
         if w > max_width or h > max_height:
             ratio = min(max_width / w, max_height / h)
             frame = cv2.resize(frame, (int(w * ratio), int(h * ratio)))
-        
-        # Apply stride alignment to ensure dimensions are multiples of 32
-        # This prevents YOLO model warnings about image size not being multiple of max stride
-        aligned_frame, scale_ratio = logic.align_to_stride(frame)
-        
+            # Store resized dimensions and ensure they are multiples of 32
+            resized_h, resized_w = frame.shape[:2]
+            # Adjust to be multiple of 32 to avoid warning
+            resized_h = (resized_h // 32) * 32
+            resized_w = (resized_w // 32) * 32
+            # If any dimension became 0, use a minimum size
+            if resized_h == 0:
+                resized_h = 32
+            if resized_w == 0:
+                resized_w = 32
+            # Resize again to ensure multiple of 32
+            frame = cv2.resize(frame, (resized_w, resized_h))
+        else:
+            # If no resizing needed, ensure dimensions are multiples of 32
+            resized_h, resized_w = h, w
+            resized_h = (resized_h // 32) * 32
+            resized_w = (resized_w // 32) * 32
+            # If any dimension became 0, use a minimum size
+            if resized_h == 0:
+                resized_h = 32
+            if resized_w == 0:
+                resized_w = 32
+            # Resize to ensure multiple of 32
+            if resized_h != h or resized_w != w:
+                frame = cv2.resize(frame, (resized_w, resized_h))
+            
         if frame_count % config.FRAME_PROCESSING_INTERVAL == 0:
             try:
                 # Use safe tracking with fallback to detection mode
-                # The aligned_frame is already properly sized for YOLO models
-                pose_results = logic.safe_track_model(pose_model, aligned_frame, verbose=False)
-                obj_results = logic.safe_track_model(obj_model, aligned_frame, classes=[56], verbose=False)
+                pose_results = logic.safe_track_model(pose_model, frame, verbose=False, imgsz=[resized_h, resized_w])
+                obj_results = logic.safe_track_model(obj_model, frame, classes=[56], verbose=False, imgsz=[resized_h, resized_w])
 
                 # Generate the fully rendered frame once
                 fully_annotated_frame = pose_results[0].plot()
-                annotated_frame = aligned_frame.copy()
+                annotated_frame = frame.copy()
                 
                 person_boxes = pose_results[0].boxes.xyxy.cpu().numpy()
                 chair_boxes = obj_results[0].boxes.xyxy.cpu().numpy()
@@ -278,7 +296,7 @@ def process_video_background(video_path: str):
                             "anomaly": person_anomalies,
                             "person": person['id']
                         })
-                        
+                
                 # High-speed splicing for person-based anomalies
                 for anomaly in anomalies_to_draw:
                     box, label = anomaly['box'], anomaly['label']
@@ -307,8 +325,7 @@ def process_video_background(video_path: str):
                 if document_model is not None:
                     try:
                         # Document detection using YOLO-World (optimized for CPU, lower confidence for better detection)
-                        # The aligned_frame is already properly sized for YOLO models
-                        doc_results = logic.safe_predict_model(document_model, aligned_frame, conf=0.15, iou=0.5, verbose=False)
+                        doc_results = document_model.predict(frame, conf=0.15, iou=0.5, imgsz=640, verbose=False)
                     except Exception as e:
                         print(f"Warning: Document detection failed: {e}")
                         doc_results = None
@@ -325,8 +342,7 @@ def process_video_background(video_path: str):
                         # Only process document anomalies if we detected documents
                         if len(document_boxes) > 0:
                             # Detect tables/desks using multiple classes: 60=dining table, 72=tv (for desk-like objects)
-                            # The aligned_frame is already properly sized for YOLO models
-                            table_results = logic.safe_track_model(obj_model, aligned_frame, classes=[60, 72], verbose=False)
+                            table_results = logic.safe_track_model(obj_model, frame, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
                             table_boxes = table_results[0].boxes.xyxy.cpu().numpy() if len(table_results[0].boxes) > 0 else np.array([])
                             
                             # Check for unattended documents on tables/desks (more lenient thresholds)
@@ -659,6 +675,105 @@ async def get_anomaly_summary():
     except Exception as e:
         client.close()
         raise HTTPException(status_code=500, detail=f"Error getting anomaly summary: {e}")
+
+@app.get("/anomalies/standing", response_model=List[AnomalyResponse])
+async def get_standing_anomalies(limit: int = 100):
+    """Get standing anomalies from MongoDB"""
+    collection, client = get_mongo_collection()
+    
+    try:
+        # Get documents with standing anomalies
+        documents = list(collection.find({
+            "anomaly_log": {
+                "$elemMatch": {
+                    "anomaly": "standing"
+                }
+            }
+        }).sort("timestamp", -1).limit(limit))
+        client.close()
+        
+        # Convert to response format
+        anomalies = []
+        for doc in documents:
+            anomalies.append(AnomalyResponse(
+                frame_id=doc["frame_id"],
+                timestamp=doc["timestamp"].isoformat() if isinstance(doc["timestamp"], datetime) else str(doc["timestamp"]),
+                video_time=doc.get("video_time", "N/A"),  # Add video time
+                total_anomalies=doc["total_anomalies"],
+                anomaly_log=doc["anomaly_log"],
+                screenshot_url=doc.get("screenshot_url")
+            ))
+        
+        return anomalies
+    except Exception as e:
+        client.close()
+        raise HTTPException(status_code=500, detail=f"Error reading from MongoDB: {e}")
+
+@app.get("/anomalies/phone", response_model=List[AnomalyResponse])
+async def get_phone_anomalies(limit: int = 100):
+    """Get phone usage anomalies from MongoDB"""
+    collection, client = get_mongo_collection()
+    
+    try:
+        # Get documents with phone anomalies
+        documents = list(collection.find({
+            "anomaly_log": {
+                "$elemMatch": {
+                    "anomaly": "phone"
+                }
+            }
+        }).sort("timestamp", -1).limit(limit))
+        client.close()
+        
+        # Convert to response format
+        anomalies = []
+        for doc in documents:
+            anomalies.append(AnomalyResponse(
+                frame_id=doc["frame_id"],
+                timestamp=doc["timestamp"].isoformat() if isinstance(doc["timestamp"], datetime) else str(doc["timestamp"]),
+                video_time=doc.get("video_time", "N/A"),  # Add video time
+                total_anomalies=doc["total_anomalies"],
+                anomaly_log=doc["anomaly_log"],
+                screenshot_url=doc.get("screenshot_url")
+            ))
+        
+        return anomalies
+    except Exception as e:
+        client.close()
+        raise HTTPException(status_code=500, detail=f"Error reading from MongoDB: {e}")
+
+@app.get("/anomalies/empty-chair", response_model=List[AnomalyResponse])
+async def get_empty_chair_anomalies(limit: int = 100):
+    """Get empty chair anomalies from MongoDB"""
+    collection, client = get_mongo_collection()
+    
+    try:
+        # Get documents with empty chair anomalies
+        documents = list(collection.find({
+            "anomaly_log": {
+                "$elemMatch": {
+                    "anomaly": "empty_chair"
+                }
+            }
+        }).sort("timestamp", -1).limit(limit))
+        client.close()
+        
+        # Convert to response format
+        anomalies = []
+        for doc in documents:
+            anomalies.append(AnomalyResponse(
+                frame_id=doc["frame_id"],
+                timestamp=doc["timestamp"].isoformat() if isinstance(doc["timestamp"], datetime) else str(doc["timestamp"]),
+                video_time=doc.get("video_time", "N/A"),  # Add video time
+                total_anomalies=doc["total_anomalies"],
+                anomaly_log=doc["anomaly_log"],
+                screenshot_url=doc.get("screenshot_url")
+            ))
+        
+        return anomalies
+    except Exception as e:
+        client.close()
+        raise HTTPException(status_code=500, detail=f"Error reading from MongoDB: {e}")
 
 @app.get("/anomalies/document", response_model=List[AnomalyResponse])
 async def get_document_anomalies(limit: int = 100):
