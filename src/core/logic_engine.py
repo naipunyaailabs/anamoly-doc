@@ -624,19 +624,31 @@ def safe_track_model(model, frame, classes=None, verbose=False, imgsz=None):
         # to be multiples of their maximum stride (typically 32)
         aligned_frame, scale_ratio = align_to_stride(frame)
         
+        # Handle imgsz parameter properly
+        # If imgsz is None, let the model use its default size
         # If imgsz is provided, ensure it's also stride-aligned
+        model_imgsz = None
         if imgsz is not None:
             if isinstance(imgsz, (int, float)):
                 # Single value provided, make it a multiple of 32
-                imgsz = ((int(imgsz) + 31) // 32) * 32
+                model_imgsz = ((int(imgsz) + 31) // 32) * 32
             elif isinstance(imgsz, (list, tuple)) and len(imgsz) == 2:
                 # Two values provided, make each a multiple of 32
-                imgsz = [((int(dim) + 31) // 32) * 32 for dim in imgsz]
+                model_imgsz = [((int(dim) + 31) // 32) * 32 for dim in imgsz]
+            else:
+                # Invalid type, use default
+                model_imgsz = None
         
         if classes is not None:
-            return model.track(aligned_frame, persist=True, classes=classes, verbose=verbose, imgsz=imgsz)
+            if model_imgsz is not None:
+                return model.track(aligned_frame, persist=True, classes=classes, verbose=verbose, imgsz=model_imgsz)
+            else:
+                return model.track(aligned_frame, persist=True, classes=classes, verbose=verbose)
         else:
-            return model.track(aligned_frame, persist=True, verbose=verbose, imgsz=imgsz)
+            if model_imgsz is not None:
+                return model.track(aligned_frame, persist=True, verbose=verbose, imgsz=model_imgsz)
+            else:
+                return model.track(aligned_frame, persist=True, verbose=verbose)
     except cv2.error as e:
         if "prevPyr[level * lvlStep1].size() == nextPyr[level * lvlStep2].size()" in str(e):
             print(f"Warning: Optical flow pyramid size mismatch. Switching to detection mode.")
@@ -644,9 +656,15 @@ def safe_track_model(model, frame, classes=None, verbose=False, imgsz=None):
             # Also ensure frame is stride-aligned for detection
             aligned_frame, scale_ratio = align_to_stride(frame)
             if classes is not None:
-                return model(aligned_frame, classes=classes, verbose=verbose, imgsz=imgsz)
+                if model_imgsz is not None:
+                    return model(aligned_frame, classes=classes, verbose=verbose, imgsz=model_imgsz)
+                else:
+                    return model(aligned_frame, classes=classes, verbose=verbose)
             else:
-                return model(aligned_frame, verbose=verbose, imgsz=imgsz)
+                if model_imgsz is not None:
+                    return model(aligned_frame, verbose=verbose, imgsz=model_imgsz)
+                else:
+                    return model(aligned_frame, verbose=verbose)
         else:
             # Re-raise if it's a different error
             raise e
@@ -656,9 +674,15 @@ def safe_track_model(model, frame, classes=None, verbose=False, imgsz=None):
         # Ensure frame is stride-aligned for detection
         aligned_frame, scale_ratio = align_to_stride(frame)
         if classes is not None:
-            return model(aligned_frame, classes=classes, verbose=verbose, imgsz=imgsz)
+            if model_imgsz is not None:
+                return model(aligned_frame, classes=classes, verbose=verbose, imgsz=model_imgsz)
+            else:
+                return model(aligned_frame, classes=classes, verbose=verbose)
         else:
-            return model(aligned_frame, verbose=verbose, imgsz=imgsz)
+            if model_imgsz is not None:
+                return model(aligned_frame, verbose=verbose, imgsz=model_imgsz)
+            else:
+                return model(aligned_frame, verbose=verbose)
 
 def safe_predict_model(model, frame, conf=0.15, iou=0.5, imgsz=640, verbose=False):
     """
@@ -685,12 +709,14 @@ def safe_predict_model(model, frame, conf=0.15, iou=0.5, imgsz=640, verbose=Fals
         aligned_frame, scale_ratio = align_to_stride(frame)
         
         # Ensure imgsz is a multiple of 32 for YOLO models
-        if isinstance(imgsz, (int, float)):
-            imgsz = ((int(imgsz) + 31) // 32) * 32
-        else:
-            imgsz = 640
+        model_imgsz = 640  # default value
+        if imgsz is not None:
+            if isinstance(imgsz, (int, float)):
+                model_imgsz = ((int(imgsz) + 31) // 32) * 32
+            else:
+                model_imgsz = 640
             
-        return model.predict(aligned_frame, conf=conf, iou=iou, imgsz=imgsz, verbose=verbose)
+        return model.predict(aligned_frame, conf=conf, iou=iou, imgsz=model_imgsz, verbose=verbose)
     except Exception as e:
         print(f"Warning: Model prediction failed: {e}")
         return None
