@@ -490,7 +490,7 @@ def detect_document_anomaly_enhanced(document_boxes, person_boxes, table_boxes,
             proximity_threshold, table_overlap_threshold
         )
     else:
-        # Fallback method: Use position-based detection (assume documents in lower portion of frame are on surfaces)
+        # Fallback method: Use position-based detection (assume documents in lower portion of frame)
         for doc_box in document_boxes:
             doc_center_y = (doc_box[1] + doc_box[3]) / 2
             # Assume documents in lower half of frame are likely on tables/desks
@@ -554,62 +554,143 @@ class TemporalDocumentFilter:
         anomaly_score = sum(self.detection_buffer) / len(self.detection_buffer)
         return f"Score: {anomaly_score:.2f} ({sum(self.detection_buffer)}/{len(self.detection_buffer)})"
 
+def align_to_stride(frame, stride=32):
+    """
+    Align frame dimensions to be multiples of the model's max stride.
+    
+    YOLO models use convolutional layers with specific stride requirements.
+    The maximum stride is typically 32, meaning input dimensions must be
+    multiples of 32 for optimal performance. This function ensures that
+    frames are resized to meet these requirements while preserving aspect ratio
+    as much as possible.
+    
+    The approach:
+    1. Calculate new dimensions that are multiples of the stride by rounding up
+    2. Resize the frame to these dimensions
+    3. Return the scale ratios for coordinate mapping if needed
+    
+    Args:
+        frame: Input frame (numpy array)
+        stride: Model's maximum stride (default 32 for YOLO models)
+        
+    Returns:
+        aligned_frame: Frame with dimensions aligned to stride
+        scale_ratio: Scale ratio used for resizing (width_ratio, height_ratio)
+    """
+    h, w = frame.shape[:2]
+    
+    # Calculate new dimensions that are multiples of stride
+    # Round up to the next multiple of stride to ensure compatibility
+    new_w = ((w + stride - 1) // stride) * stride
+    new_h = ((h + stride - 1) // stride) * stride
+    
+    # If dimensions are already multiples of stride, no resizing needed
+    if new_w == w and new_h == h:
+        return frame, (1.0, 1.0)
+    
+    # Calculate scale ratio for coordinate mapping
+    scale_w = new_w / w
+    scale_h = new_h / h
+    
+    # Resize frame to aligned dimensions
+    # Using INTER_LINEAR for better quality when upscaling
+    aligned_frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+    
+    # Return scale ratios for width and height separately
+    scale_ratio = (scale_w, scale_h)
+    
+    return aligned_frame, scale_ratio
+
 def safe_track_model(model, frame, classes=None, verbose=False, imgsz=None):
     """
     Safely track objects with fallback to detection mode on optical flow errors.
+    
+    This function ensures input frames are properly aligned to the model's stride
+    requirements before processing, preventing warnings about image size mismatches.
     
     Args:
         model: YOLO model instance
         frame: Input frame
         classes: Classes to detect
         verbose: Verbosity flag
-        imgsz: Image size for consistent processing
+        imgsz: Image size for processing (will be stride-aligned if provided)
     
     Returns:
         Model results
     """
     try:
+        # Align frame to model's stride requirements to prevent size warnings
+        # This is essential for YOLO models which require input dimensions
+        # to be multiples of their maximum stride (typically 32)
+        aligned_frame, scale_ratio = align_to_stride(frame)
+        
+        # If imgsz is provided, ensure it's also stride-aligned
+        if imgsz is not None:
+            if isinstance(imgsz, (int, float)):
+                # Single value provided, make it a multiple of 32
+                imgsz = ((int(imgsz) + 31) // 32) * 32
+            elif isinstance(imgsz, (list, tuple)) and len(imgsz) == 2:
+                # Two values provided, make each a multiple of 32
+                imgsz = [((int(dim) + 31) // 32) * 32 for dim in imgsz]
+        
         if classes is not None:
-            return model.track(frame, persist=True, classes=classes, verbose=verbose, imgsz=imgsz)
+            return model.track(aligned_frame, persist=True, classes=classes, verbose=verbose, imgsz=imgsz)
         else:
-            return model.track(frame, persist=True, verbose=verbose, imgsz=imgsz)
+            return model.track(aligned_frame, persist=True, verbose=verbose, imgsz=imgsz)
     except cv2.error as e:
         if "prevPyr[level * lvlStep1].size() == nextPyr[level * lvlStep2].size()" in str(e):
             print(f"Warning: Optical flow pyramid size mismatch. Switching to detection mode.")
             # Fallback to detection mode without tracking
+            # Also ensure frame is stride-aligned for detection
+            aligned_frame, scale_ratio = align_to_stride(frame)
             if classes is not None:
-                return model(frame, classes=classes, verbose=verbose, imgsz=imgsz)
+                return model(aligned_frame, classes=classes, verbose=verbose, imgsz=imgsz)
             else:
-                return model(frame, verbose=verbose, imgsz=imgsz)
+                return model(aligned_frame, verbose=verbose, imgsz=imgsz)
         else:
             # Re-raise if it's a different error
             raise e
     except Exception as e:
         print(f"Warning: Model tracking failed: {e}")
         # Fallback to detection mode for any other error
+        # Ensure frame is stride-aligned for detection
+        aligned_frame, scale_ratio = align_to_stride(frame)
         if classes is not None:
-            return model(frame, classes=classes, verbose=verbose, imgsz=imgsz)
+            return model(aligned_frame, classes=classes, verbose=verbose, imgsz=imgsz)
         else:
-            return model(frame, verbose=verbose, imgsz=imgsz)
+            return model(aligned_frame, verbose=verbose, imgsz=imgsz)
 
 def safe_predict_model(model, frame, conf=0.15, iou=0.5, imgsz=640, verbose=False):
     """
     Safely predict with error handling.
+    
+    This function ensures input frames are properly aligned to the model's stride
+    requirements before processing, preventing warnings about image size mismatches.
     
     Args:
         model: YOLO model instance
         frame: Input frame
         conf: Confidence threshold
         iou: IoU threshold
-        imgsz: Image size
+        imgsz: Image size (will be stride-aligned)
         verbose: Verbosity flag
     
     Returns:
         Model results
     """
     try:
-        return model.predict(frame, conf=conf, iou=iou, imgsz=imgsz, verbose=verbose)
+        # Align frame to model's stride requirements to prevent size warnings
+        # This is essential for YOLO models which require input dimensions
+        # to be multiples of their maximum stride (typically 32)
+        aligned_frame, scale_ratio = align_to_stride(frame)
+        
+        # Ensure imgsz is a multiple of 32 for YOLO models
+        if isinstance(imgsz, (int, float)):
+            imgsz = ((int(imgsz) + 31) // 32) * 32
+        else:
+            imgsz = 640
+            
+        return model.predict(aligned_frame, conf=conf, iou=iou, imgsz=imgsz, verbose=verbose)
     except Exception as e:
         print(f"Warning: Model prediction failed: {e}")
         return None
-

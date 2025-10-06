@@ -162,28 +162,32 @@ def process_video(video_path):
             
             max_width, max_height = 1280, 720
             h, w, _ = frame.shape
+            
+            # Resize frame while maintaining aspect ratio if needed
             if w > max_width or h > max_height:
                 ratio = min(max_width / w, max_height / h)
                 frame = cv2.resize(frame, (int(w * ratio), int(h * ratio)))
-                # Store resized dimensions
-                resized_h, resized_w = frame.shape[:2]
-            else:
-                # If no resizing needed, dimensions remain the same
-                resized_h, resized_w = h, w
+            
+            # Apply stride alignment to ensure dimensions are multiples of 32
+            # This prevents YOLO model warnings about image size not being multiple of max stride
+            aligned_frame, scale_ratio = logic.align_to_stride(frame)
                 
             # Process every 3rd frame
             if frame_count % 3 == 0:
                 # Use safe tracking with fallback to detection mode
-                pose_results = logic.safe_track_model(pose_model, frame, verbose=False, imgsz=[resized_h, resized_w])
-                obj_results = logic.safe_track_model(obj_model, frame, classes=[56], verbose=False, imgsz=[resized_h, resized_w])
+                # The aligned_frame is already properly sized for YOLO models
+                pose_results = logic.safe_track_model(pose_model, aligned_frame, verbose=False)
+                obj_results = logic.safe_track_model(obj_model, aligned_frame, classes=[56], verbose=False)
                 # Detect tables/desks using multiple classes: 60=dining table, 72=tv (for desk-like objects)
-                table_results = logic.safe_track_model(obj_model, frame, classes=[60, 72], verbose=False, imgsz=[resized_h, resized_w])
+                # The aligned_frame is already properly sized for YOLO models
+                table_results = logic.safe_track_model(obj_model, aligned_frame, classes=[60, 72], verbose=False)
                 
                 # Document detection using YOLO-World (only if model loaded successfully)
+                # The aligned_frame is already properly sized for YOLO models
                 doc_results = None
                 if document_model is not None:
                     # Use safe prediction with error handling
-                    doc_results = logic.safe_predict_model(document_model, frame, conf=0.15, iou=0.5, imgsz=640, verbose=False)
+                    doc_results = logic.safe_predict_model(document_model, aligned_frame, conf=0.15, iou=0.5, verbose=False)
                 
                 # TODO: Re-enable phone detection when more reliable
                 # phone_results = obj_model.track(frame, persist=True, classes=[67], verbose=False)
@@ -191,7 +195,7 @@ def process_video(video_path):
                 # --- 1. Generate the fully rendered frame once (this is fast) ---
                 fully_annotated_frame = pose_results[0].plot()
                 # --- 2. Start with a clean frame for our selective display ---
-                annotated_frame = frame.copy()
+                annotated_frame = aligned_frame.copy()
                 
                 print("\n--- Anomaly Report ---")
                 
