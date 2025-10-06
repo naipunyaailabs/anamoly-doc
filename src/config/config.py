@@ -34,4 +34,4 @@ class Config:
     # Model Files
     POSE_MODEL_PATH = "yolov8n-pose.pt"
     OBJECT_MODEL_PATH = "yolov8s.pt"
-    DOCUMENT_MODEL_PATH =   "yolov8s-worldv2.pt"
+    DOCUMENT_MODEL_PATH = "yolov8s.pt"  # Use standard YOLOv8 model for document detection
